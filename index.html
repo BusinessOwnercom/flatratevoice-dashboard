@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>FlatRateVoice — Usage Dashboard</title>
+<meta name="robots" content="noindex"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{--black:#080B0F;--s1:#0E1318;--s2:#141B22;--s3:#1C2530;--border:#232E3C;--borderlit:#2E3E52;--slate4:#7A8EA6;--slate3:#9BAFC7;--slate2:#C4D3E3;--white:#F0F5FA;--cyan:#00D4FF;--green:#44DD88;--red:#ff7070;--amber:#ffc861;--dsp:'Space Grotesk',system-ui,sans-serif;--body:'Inter',system-ui,sans-serif}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--black);color:var(--slate2);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--dsp);color:var(--white);letter-spacing:-.02em}
+a{color:var(--cyan);text-decoration:none}
+button{cursor:pointer;font-family:var(--body);border:none}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;border-bottom:1px solid var(--border);background:var(--s1);position:sticky;top:0;z-index:50;flex-wrap:wrap;gap:12px}
+.logo{display:flex;align-items:center;gap:8px;font-family:var(--dsp);font-weight:700;font-size:17px;color:var(--white)}
+.who{font-size:12px;color:var(--slate4);display:flex;align-items:center;gap:12px}
+.who b{color:var(--slate2);font-weight:600}
+.btn{background:var(--cyan);color:var(--black);border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;font-family:var(--dsp)}
+.btn.ghost{background:var(--s3);color:var(--white);border:1px solid var(--borderlit)}
+.wrap{max-width:1180px;margin:0 auto;padding:26px}
+.crumbs{font-size:13px;color:var(--slate4);margin-bottom:6px}
+.viewhead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+.viewhead h1{font-size:26px}.viewhead .sub{font-size:13px;color:var(--slate4);margin-top:4px}
+.pill{font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 11px;border-radius:100px;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--cyan)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.kpi{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:18px 20px}
+.kpi .l{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--slate4);margin-bottom:8px}
+.kpi .v{font-size:28px;font-weight:700;font-family:var(--dsp);color:var(--white);letter-spacing:-.03em}
+.kpi .d{font-size:12px;margin-top:4px;color:var(--slate4)}.kpi .d.g{color:var(--green)}.kpi .d.r{color:var(--red)}.kpi .d.a{color:var(--amber)}
+.card{background:var(--s2);border:1px solid var(--border);border-radius:12px;margin-bottom:22px;overflow:hidden}
+.card-hd{padding:16px 20px;border-bottom:1px solid var(--border);background:var(--s3);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.card-hd h3{font-size:15px}.card-hd .meta{font-size:12px;color:var(--slate4)}
+.pool{padding:20px}
+.pool-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.pool-top .big{font-size:22px;font-weight:700;font-family:var(--dsp);color:var(--white)}.pool-top .small{font-size:13px;color:var(--slate4)}
+.bar{height:12px;border-radius:8px;background:var(--s3);overflow:hidden;border:1px solid var(--border)}
+.bar>span{display:block;height:100%;background:linear-gradient(90deg,#0099BB,#00D4FF);border-radius:8px}
+.bar.over>span{background:linear-gradient(90deg,#cc5555,#ff7070)}
+.pool-legend{display:flex;justify-content:space-between;font-size:12px;color:var(--slate4);margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--slate4);padding:12px 20px;border-bottom:1px solid var(--border);background:var(--s3)}
+tbody td{padding:13px 20px;border-bottom:1px solid var(--border);color:var(--slate2)}
+tbody tr:last-child td{border-bottom:none}
+tbody tr.click{cursor:pointer;transition:background .12s}tbody tr.click:hover{background:var(--s3)}
+.name{color:var(--white);font-weight:600}.mono{font-family:var(--dsp);font-weight:600}.muted{color:var(--slate4)}
+.tag{font-size:11px;padding:2px 9px;border-radius:100px;font-weight:600}
+.tag.ok{background:rgba(68,221,136,.12);color:var(--green)}.tag.warn{background:rgba(255,200,97,.12);color:var(--amber)}.tag.over{background:rgba(255,112,112,.12);color:var(--red)}
+.tag.booked{background:rgba(68,221,136,.12);color:var(--green)}.tag.message{background:rgba(255,200,97,.12);color:var(--amber)}.tag.no_booking{background:rgba(255,112,112,.12);color:var(--red)}.tag.transferred{background:rgba(0,212,255,.12);color:var(--cyan)}.tag.other{background:var(--s3);color:var(--slate3)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.back{font-size:13px;color:var(--cyan);cursor:pointer;margin-bottom:14px;display:inline-block}
+/* login */
+.login{max-width:400px;margin:8vh auto;background:var(--s2);border:1px solid var(--borderlit);border-radius:14px;overflow:hidden}
+.login-hd{padding:24px;border-bottom:1px solid var(--border);text-align:center}
+.login-hd h2{font-size:20px;margin-top:10px}.login-hd p{font-size:13px;color:var(--slate4);margin-top:4px}
+.login-bd{padding:24px}
+.fld{margin-bottom:14px}.fld label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--slate4);margin-bottom:6px}
+.fld input{width:100%;padding:11px 13px;background:var(--s3);border:1px solid var(--border);border-radius:8px;color:var(--white);font-size:14px;outline:none}
+.fld input:focus{border-color:var(--cyandim)}
+.msg{font-size:13px;padding:10px 12px;border-radius:8px;margin-bottom:14px;display:none}
+.msg.err{background:rgba(255,112,112,.1);color:var(--red);display:block}
+.msg.ok{background:rgba(68,221,136,.1);color:var(--green);display:block}
+.lnk{font-size:12px;color:var(--slate4);text-align:center;margin-top:14px}.lnk a{cursor:pointer}
+.center{text-align:center;padding:60px 20px;color:var(--slate4)}
+@media(max-width:820px){.kpis{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="root"><div class="center">Loading…</div></div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/* ===== CONFIG (public keys — safe in frontend; RLS protects data) ===== */
+const SUPABASE_URL = 'https://ughcoidratfajzujpykp.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_8a29mWTXeWUneRQL_EEc8w_uskN3iyx';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const TIER = { starter:{pool:2500,price:297,ovg:.07}, growth:{pool:6000,price:497,ovg:.07}, scale:{pool:12000,price:997,ovg:.05} };
+const $ = s => document.getElementById(s);
+const root = $('root');
+let PROFILE=null, NAV={};
+
+const fmt=n=>Math.round(Number(n||0)).toLocaleString();
+const money=n=>'$'+Math.round(Number(n||0)).toLocaleString();
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- AUTH ---------- */
+function loginScreen(mode='signin'){
+  root.innerHTML = `
+  <div class="login">
+    <div class="login-hd">
+      <div class="logo" style="justify-content:center"><svg width="26" height="16" viewBox="0 0 28 20" fill="none"><rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="#00D4FF" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="#00D4FF"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="#00D4FF" opacity=".72"/></svg> FlatRateVoice</div>
+      <h2>${mode==='signup'?'Create your account':'Sign in'}</h2>
+      <p>Usage dashboard</p>
+    </div>
+    <div class="login-bd">
+      <div class="msg" id="m"></div>
+      <div class="fld"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@company.com"></div>
+      <div class="fld"><label>Password</label><input id="pw" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}" placeholder="••••••••"></div>
+      <button class="btn" style="width:100%;padding:12px" id="go">${mode==='signup'?'Create account':'Sign in'}</button>
+      <div class="lnk">${mode==='signup'?'Have an account? <a id="sw">Sign in</a>':'New here? <a id="sw">Create an account</a>'} · <a id="magic">Email me a login link</a></div>
+    </div>
+  </div>`;
+  $('go').onclick=async()=>{
+    const email=$('em').value.trim(), password=$('pw').value;
+    if(!email||!password) return showMsg('Enter email and password','err');
+    $('go').disabled=true;$('go').textContent='…';
+    const fn = mode==='signup' ? sb.auth.signUp({email,password}) : sb.auth.signInWithPassword({email,password});
+    const {error}=await fn;
+    $('go').disabled=false;$('go').textContent=mode==='signup'?'Create account':'Sign in';
+    if(error) return showMsg(error.message,'err');
+    if(mode==='signup') showMsg('Account created. If email confirmation is on, check your inbox, then sign in.','ok');
+    // onAuthStateChange handles routing when session is set
+  };
+  $('sw').onclick=()=>loginScreen(mode==='signup'?'signin':'signup');
+  $('magic').onclick=async()=>{
+    const email=$('em').value.trim(); if(!email) return showMsg('Enter your email first','err');
+    const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});
+    showMsg(error?error.message:'Check your email for a login link.',error?'err':'ok');
+  };
+}
+function showMsg(t,cls){const m=$('m');if(m){m.className='msg '+cls;m.textContent=t;}}
+
+async function boot(){
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session) return loginScreen('signin');
+  const {data:prof,error} = await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(error){root.innerHTML=`<div class="center">Error loading profile: ${esc(error.message)}</div>`;return;}
+  if(!prof){root.innerHTML=`<div class="center">Signed in as ${esc(session.user.email)} but no profile row yet. Ask an admin to set your role.<br><br><button class="btn ghost" id="out">Sign out</button></div>`;$('out').onclick=()=>sb.auth.signOut();return;}
+  PROFILE={...prof,email:session.user.email};
+  render();
+}
+sb.auth.onAuthStateChange((_e,s)=>{ if(s) boot(); else loginScreen('signin'); });
+
+/* ---------- SHELL ---------- */
+function shell(inner){
+  root.innerHTML=`
+  <div class="topbar">
+    <div class="logo"><svg width="24" height="16" viewBox="0 0 28 20" fill="none"><rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="#00D4FF" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="#00D4FF"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="#00D4FF" opacity=".72"/></svg> FlatRateVoice</div>
+    <div class="who"><span style="color:var(--green)">● live</span><span><b>${esc(PROFILE.full_name||PROFILE.email)}</b> · ${PROFILE.role.replace('_',' ')}</span><button class="btn ghost" id="refresh">⟳</button><button class="btn ghost" id="signout">Sign out</button></div>
+  </div>
+  <div class="wrap" id="view">${inner}</div>`;
+  $('signout').onclick=()=>sb.auth.signOut();
+  $('refresh').onclick=()=>render();
+  if(!window.__autorefresh){ window.__autorefresh=setInterval(()=>{ if(PROFILE && !document.hidden) render(); }, 20000); }
+}
+
+function poolCalc(row){
+  const t=TIER[row.plan]||TIER.starter, used=Number(row.minutes_used||0);
+  const pct=Math.min(100,Math.round(used/t.pool*100)), over=Math.max(0,used-t.pool);
+  return {t,used,pct,over,bill:t.price+over*t.ovg,status:over>0?'over':pct>=85?'warn':'ok'};
+}
+function kpi(l,v,d,cls){return `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>${d?`<div class="d ${cls||''}">${d}</div>`:''}</div>`}
+
+/* ---------- ROUTER ---------- */
+async function render(){
+  const r=PROFILE.role;
+  if(r==='super_admin'){
+    if(NAV.location) return clientView(NAV.location,true);
+    if(NAV.agency) return agencyView(NAV.agency,true);
+    return adminHome();
+  }
+  if(r==='agency_admin'){
+    if(NAV.location) return clientView(NAV.location,true);
+    return agencyView(PROFILE.agency_id,false);
+  }
+  return clientView(PROFILE.location_id,false); // client_user
+}
+window.__go=(t,id)=>{NAV[t]=id;render();};
+window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency; render(); };
+
+/* ---------- SUPER ADMIN ---------- */
+async function adminHome(){
+  shell(`<div class="center">Loading platform…</div>`);
+  const [{data:ags},{data:locs},{data:calls}] = await Promise.all([
+    sb.from('agency_month_usage').select('*').order('name'),
+    sb.from('locations').select('id,agency_id'),
+    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8)
+  ]);
+  const locCount={}; (locs||[]).forEach(l=>locCount[l.agency_id]=(locCount[l.agency_id]||0)+1);
+  const totalMin=(ags||[]).reduce((s,a)=>s+Number(a.minutes_used||0),0);
+  const mrr=(ags||[]).reduce((s,a)=>s+poolCalc(a).bill,0);
+  const overN=(ags||[]).filter(a=>poolCalc(a).over>0).length;
+  const rows=(ags||[]).map(a=>{const p=poolCalc(a);return `<tr class="click" onclick="__go('agency','${a.agency_id}')">
+    <td class="name">${esc(a.name)}</td><td style="text-transform:capitalize">${a.plan}</td><td>${locCount[a.agency_id]||0}</td>
+    <td class="mono">${fmt(a.minutes_used)} / ${fmt(p.t.pool)}</td>
+    <td><div class="bar" style="width:120px"><span style="width:${p.pct}%;${p.over>0?'background:linear-gradient(90deg,#cc5555,#ff7070)':''}"></span></div></td>
+    <td><span class="tag ${p.status}">${p.over>0?'Over':p.status==='warn'?'85%+':'Healthy'}</span></td>
+    <td class="mono">${money(p.bill)}</td></tr>`;}).join('');
+  $('view').innerHTML=`
+    <div class="viewhead"><div><div class="crumbs">All agencies</div><h1>Platform overview</h1><div class="sub">Every agency, every client location, live usage.</div></div><span class="pill">SUPER ADMIN</span></div>
+    <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',(locs||[]).length,'live')}${kpi('Minutes this month',fmt(totalMin),'all agencies')}${kpi('Projected revenue',money(mrr),overN?overN+' in overage':'all within pool',overN?'a':'g')}</div>
+    <div class="card"><div class="card-hd"><h3>Agencies</h3><span class="meta">click a row to drill in</span></div>
+    <table><thead><tr><th>Agency</th><th>Plan</th><th>Clients</th><th>Minutes</th><th>Pool</th><th>Status</th><th>Bill</th></tr></thead><tbody>${rows||'<tr><td colspan=7 class="muted" style="padding:20px">No agencies yet.</td></tr>'}</tbody></table></div>
+    ${callsCard(calls,true)}`;
+}
+
+/* ---------- AGENCY ---------- */
+async function agencyView(agencyId,fromAdmin){
+  shell(`<div class="center">Loading agency…</div>`);
+  const [{data:agRows},{data:locs},{data:calls}] = await Promise.all([
+    sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
+    sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
+    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8)
+  ]);
+  const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
+  const p=poolCalc(a);
+  const calls_m=(locs||[]).reduce((s,l)=>s+Number(l.calls||0),0);
+  const booked=(locs||[]).reduce((s,l)=>s+Number(l.booked||0),0);
+  const rows=(locs||[]).map(l=>`<tr class="click" onclick="__go('location','${l.location_id}')">
+    <td class="name">${esc(l.name)}</td><td class="muted">${esc(l.vertical||'')}</td>
+    <td class="mono">${fmt(l.minutes)}</td><td class="mono">${fmt(l.calls)}</td><td class="mono">${fmt(l.booked)}</td>
+    <td class="mono">${l.calls>0?Math.round(l.booked/l.calls*100):0}%</td></tr>`).join('');
+  $('view').innerHTML=`
+    ${fromAdmin?`<span class="back" onclick="__back()">← All agencies</span>`:''}
+    <div class="viewhead"><div><div class="crumbs">${fromAdmin?'Agencies / ':''}${esc(a.name)}</div><h1>${esc(a.name)}</h1><div class="sub">${(locs||[]).length} client locations · ${a.plan} plan</div></div><span class="pill">${fromAdmin?'ADMIN VIEW':'AGENCY ADMIN'}</span></div>
+    <div class="kpis">${kpi('Minutes used',fmt(p.used),'of '+fmt(p.t.pool)+' pooled',p.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi('Projected bill',money(p.bill),p.over>0?'incl. '+fmt(p.over)+' min overage':'within pool',p.over>0?'r':'g')}</div>
+    <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base · overage $${p.t.ovg.toFixed(2)}/min</span></div>
+    <div class="pool"><div class="pool-top"><div class="big">${fmt(p.used)} / ${fmt(p.t.pool)} min</div><div class="small">${p.over>0?`<span class="tag over">${fmt(p.over)} min over</span>`:fmt(p.t.pool-p.used)+' min left'}</div></div>
+      <div class="bar ${p.over>0?'over':''}"><span style="width:${p.pct}%"></span></div>
+      <div class="pool-legend"><span>${p.pct}% of pool used</span><span>Projected bill: <b class="mono" style="color:${p.over>0?'var(--red)':'var(--cyan)'}">${money(p.bill)}</b></span></div></div></div>
+    <div class="card"><div class="card-hd"><h3>Client locations</h3><span class="meta">click a client</span></div>
+    <table><thead><tr><th>Client</th><th>Vertical</th><th>Minutes</th><th>Calls</th><th>Booked</th><th>Book rate</th></tr></thead><tbody>${rows||'<tr><td colspan=6 class="muted" style="padding:20px">No locations yet.</td></tr>'}</tbody></table></div>
+    ${callsCard(calls,true)}`;
+}
+
+/* ---------- CLIENT ---------- */
+async function clientView(locationId,fromDrill){
+  shell(`<div class="center">Loading…</div>`);
+  const [{data:lm},{data:calls}] = await Promise.all([
+    sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
+    sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10)
+  ]);
+  if(!lm){$('view').innerHTML=`<div class="center">No data for this location.</div>`;return;}
+  const rate=lm.calls>0?Math.round(lm.booked/lm.calls*100):0;
+  $('view').innerHTML=`
+    ${fromDrill?`<span class="back" onclick="__back()">← Back</span>`:''}
+    <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} · AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
+    <div class="kpis">${kpi('Calls answered',fmt(lm.calls),'this month · 24/7')}${kpi('Appointments booked',fmt(lm.booked),rate+'% of calls','g')}${kpi('Minutes used',fmt(lm.minutes),'this month')}${kpi('After-hours saves',fmt(lm.after_hours),'answered off-hours','g')}</div>
+    <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
+    <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
+}
+
+function callRow(c){
+  const d=new Date(c.started_at), ago=timeAgo(d);
+  const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'—';
+  const label={booked:'Booked',message:'Message taken',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
+  return `<tr><td class="muted">${ago}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
+}
+function callsCard(calls,showLoc){
+  const rows=(calls||[]).map(c=>{
+    const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'—';
+    const label={booked:'Booked',message:'Message',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
+    return `<tr><td class="muted">${timeAgo(new Date(c.started_at))}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
+  }).join('');
+  return `<div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
+  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${rows||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
+}
+function timeAgo(d){const s=(Date.now()-d.getTime())/1000;if(s<3600)return Math.max(1,Math.floor(s/60))+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
+
+boot();
+</script>
+</body>
+</html>
