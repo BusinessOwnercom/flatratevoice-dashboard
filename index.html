@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>FlatRateVoice Ã¢ÂÂ Usage Dashboard</title>
+<title>FlatRateVoice ÃÂ¢ÃÂÃÂ Usage Dashboard</title>
 <meta name="robots" content="noindex"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet"/>
@@ -68,12 +68,12 @@ tbody tr.click{cursor:pointer;transition:background .12s}tbody tr.click:hover{ba
 </style>
 </head>
 <body>
-<div id="root"><div class="center">LoadingÃ¢ÂÂ¦</div></div>
+<div id="root"><div class="center">LoadingÃÂ¢ÃÂÃÂ¦</div></div>
 
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-/* ===== CONFIG (public keys Ã¢ÂÂ safe in frontend; RLS protects data) ===== */
+/* ===== CONFIG (public keys ÃÂ¢ÃÂÃÂ safe in frontend; RLS protects data) ===== */
 const SUPABASE_URL = 'https://ughcoidratfajzujpykp.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_8a29mWTXeWUneRQL_EEc8w_uskN3iyx';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -99,15 +99,15 @@ function loginScreen(mode='signin'){
     <div class="login-bd">
       <div class="msg" id="m"></div>
       <div class="fld"><label>Email</label><input id="em" type="email" autocomplete="email" placeholder="you@company.com"></div>
-      <div class="fld"><label>Password</label><input id="pw" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}" placeholder="Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢Ã¢ÂÂ¢"></div>
+      <div class="fld"><label>Password</label><input id="pw" type="password" autocomplete="${mode==='signup'?'new-password':'current-password'}" placeholder="ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢ÃÂ¢ÃÂÃÂ¢"></div>
       <button class="btn" style="width:100%;padding:12px" id="go">${mode==='signup'?'Create account':'Sign in'}</button>
-      <div class="lnk">${mode==='signup'?'Have an account? <a id="sw">Sign in</a>':'New here? <a id="sw">Create an account</a>'} ÃÂ· <a id="magic">Email me a login link</a></div>
+      <div class="lnk">${mode==='signup'?'Have an account? <a id="sw">Sign in</a>':'New here? <a id="sw">Create an account</a>'} ÃÂÃÂ· <a id="magic">Email me a login link</a></div>
     </div>
   </div>`;
   $('go').onclick=async()=>{
     const email=$('em').value.trim(), password=$('pw').value;
     if(!email||!password) return showMsg('Enter email and password','err');
-    $('go').disabled=true;$('go').textContent='Ã¢ÂÂ¦';
+    $('go').disabled=true;$('go').textContent='ÃÂ¢ÃÂÃÂ¦';
     const fn = mode==='signup' ? sb.auth.signUp({email,password}) : sb.auth.signInWithPassword({email,password});
     const {error}=await fn;
     $('go').disabled=false;$('go').textContent=mode==='signup'?'Create account':'Sign in';
@@ -140,7 +140,7 @@ function shell(inner){
   root.innerHTML=`
   <div class="topbar">
     <div class="logo"><svg width="24" height="16" viewBox="0 0 28 20" fill="none"><rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="#00D4FF" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="#00D4FF"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="#00D4FF" opacity=".72"/></svg> FlatRateVoice</div>
-    <div class="who"><span style="color:var(--green)">Ã¢ÂÂ live</span><span><b>${esc(PROFILE.full_name||PROFILE.email)}</b> ÃÂ· ${PROFILE.role.replace('_',' ')}</span><button class="btn ghost" id="refresh">Ã¢ÂÂ³</button><button class="btn ghost" id="signout">Sign out</button></div>
+    <div class="who"><span style="color:var(--green)">ÃÂ¢ÃÂÃÂ live</span><span><b>${esc(PROFILE.full_name||PROFILE.email)}</b> ÃÂÃÂ· ${PROFILE.role.replace('_',' ')}</span><button class="btn ghost" id="refresh">ÃÂ¢ÃÂÃÂ³</button><button class="btn ghost" id="signout">Sign out</button></div>
   </div>
   <div class="wrap" id="view">${inner}</div>`;
   $('signout').onclick=()=>sb.auth.signOut();
@@ -174,7 +174,7 @@ window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency
 
 /* ---------- SUPER ADMIN ---------- */
 async function adminHome(){
-  shell(`<div class="center">Loading platformÃ¢ÂÂ¦</div>`);
+  shell(`<div class="center">Loading platformÃÂ¢ÃÂÃÂ¦</div>`);
   const [{data:ags},{data:locs},{data:calls}] = await Promise.all([
     sb.from('agency_month_usage').select('*').order('name'),
     sb.from('locations').select('id,agency_id'),
@@ -200,11 +200,12 @@ async function adminHome(){
 
 /* ---------- AGENCY ---------- */
 async function agencyView(agencyId,fromAdmin){
-  shell(`<div class="center">Loading agencyÃ¢ÂÂ¦</div>`);
-  const [{data:agRows},{data:locs},{data:calls}] = await Promise.all([
+  shell(`<div class="center">Loading agencyÃÂ¢ÃÂÃÂ¦</div>`);
+  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow}] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
-    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8)
+    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
+    sb.from('agencies').select('ghl_webhook_url').eq('id',agencyId).maybeSingle()
   ]);
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
@@ -215,10 +216,14 @@ async function agencyView(agencyId,fromAdmin){
     <td class="mono">${fmt(l.minutes)}</td><td class="mono">${fmt(l.calls)}</td><td class="mono">${fmt(l.booked)}</td>
     <td class="mono">${l.calls>0?Math.round(l.booked/l.calls*100):0}%</td></tr>`).join('');
   $('view').innerHTML=`
-    ${fromAdmin?`<span class="back" onclick="__back()">Ã¢ÂÂ All agencies</span>`:''}
-    <div class="viewhead"><div><div class="crumbs">${fromAdmin?'Agencies / ':''}${esc(a.name)}</div><h1>${esc(a.name)}</h1><div class="sub">${(locs||[]).length} client locations ÃÂ· ${a.plan} plan</div></div><span class="pill">${fromAdmin?'ADMIN VIEW':'AGENCY ADMIN'}</span></div>
+    ${fromAdmin?`<span class="back" onclick="__back()">ÃÂ¢ÃÂÃÂ All agencies</span>`:''}
+    <div class="viewhead"><div><div class="crumbs">${fromAdmin?'Agencies / ':''}${esc(a.name)}</div><h1>${esc(a.name)}</h1><div class="sub">${(locs||[]).length} client locations ÃÂÃÂ· ${a.plan} plan</div></div><span class="pill">${fromAdmin?'ADMIN VIEW':'AGENCY ADMIN'}</span></div>
+    <div class="card"><div class="card-hd"><h3>GHL Integration</h3><span class="meta">where call data gets sent after each call</span></div>
+    <div style="padding:16px 20px"><label class="meta">Inbound Webhook URL</label><br>
+      <div style="display:flex;gap:10px;margin-top:6px"><input id="ghlWebhookInput" value="${esc((ghlRow&&ghlRow.ghl_webhook_url)||'')}" placeholder="https://services.leadconnectorhq.com/hooks/..." style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"><button class="btn" onclick="__saveGhlWebhook('${agencyId}')">Save</button></div>
+      <div id="ghlWebhookMsg" class="meta" style="margin-top:8px"></div></div></div>
     <div class="kpis">${kpi('Minutes used',fmt(p.used),'of '+fmt(p.t.pool)+' pooled',p.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi('Projected bill',money(p.bill),p.over>0?'incl. '+fmt(p.over)+' min overage':'within pool',p.over>0?'r':'g')}</div>
-    <div class="card"><div class="card-hd"><h3>Pooled minutes Ã¢ÂÂ ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base ÃÂ· overage $${p.t.ovg.toFixed(2)}/min</span></div>
+    <div class="card"><div class="card-hd"><h3>Pooled minutes ÃÂ¢ÃÂÃÂ ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base ÃÂÃÂ· overage $${p.t.ovg.toFixed(2)}/min</span></div>
     <div class="pool"><div class="pool-top"><div class="big">${fmt(p.used)} / ${fmt(p.t.pool)} min</div><div class="small">${p.over>0?`<span class="tag over">${fmt(p.over)} min over</span>`:fmt(p.t.pool-p.used)+' min left'}</div></div>
       <div class="bar ${p.over>0?'over':''}"><span style="width:${p.pct}%"></span></div>
       <div class="pool-legend"><span>${p.pct}% of pool used</span><span>Projected bill: <b class="mono" style="color:${p.over>0?'var(--red)':'var(--cyan)'}">${money(p.bill)}</b></span></div></div></div>
@@ -228,7 +233,7 @@ async function agencyView(agencyId,fromAdmin){
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div><label class="meta">Business name</label><br><input id="newLocName" required style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
           <div><label class="meta">Vertical</label><br><select id="newLocVertical" required style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
-            <option value="">Selectâ¦</option>
+            <option value="">SelectÃ¢ÂÂ¦</option>
             <option value="hvac">HVAC</option>
             <option value="plumbing">Plumbing</option>
             <option value="roofing">Roofing</option>
@@ -253,6 +258,19 @@ window.__toggleAddLoc = function(){
   if(el) el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
+window.__saveGhlWebhook = async function(agencyId){
+  const val = document.getElementById("ghlWebhookInput").value.trim();
+  const msgEl = document.getElementById("ghlWebhookMsg");
+  msgEl.textContent = "Saving...";
+  try{
+    const { error } = await sb.from("agencies").update({ghl_webhook_url: val || null}).eq("id", agencyId);
+    if(error){ msgEl.textContent = "Error: " + error.message; return; }
+    msgEl.textContent = "Saved. New locations will use this webhook.";
+  }catch(err){
+    msgEl.textContent = "Network error: " + err.message;
+  }
+};
+
 window.__submitAddLoc = async function(e, agencyId, fromAdmin){
   e.preventDefault();
   const name = document.getElementById("newLocName").value.trim();
@@ -261,7 +279,7 @@ window.__submitAddLoc = async function(e, agencyId, fromAdmin){
   const msgEl = document.getElementById("newLocMsg");
   const btn = document.getElementById("newLocSubmit");
   if(!name || !vertical){ msgEl.textContent = "Business name and vertical are required."; return false; }
-  btn.disabled = true; btn.textContent = "Provisioningâ¦"; msgEl.textContent = "";
+  btn.disabled = true; btn.textContent = "ProvisioningÃ¢ÂÂ¦"; msgEl.textContent = "";
   try{
     const {data:{session}} = await sb.auth.getSession();
     const body = {business_name:name, vertical};
@@ -278,7 +296,7 @@ window.__submitAddLoc = async function(e, agencyId, fromAdmin){
       btn.disabled = false; btn.textContent = "Add Location";
       return false;
     }
-    msgEl.textContent = "Success â provisioned " + result.twilio_number + ". Refreshingâ¦";
+    msgEl.textContent = "Success Ã¢ÂÂ provisioned " + result.twilio_number + ". RefreshingÃ¢ÂÂ¦";
     setTimeout(()=>agencyView(agencyId, fromAdmin), 1200);
   }catch(err){
     msgEl.textContent = "Network error: " + err.message;
@@ -289,7 +307,7 @@ window.__submitAddLoc = async function(e, agencyId, fromAdmin){
 
 /* ---------- CLIENT ---------- */
 async function clientView(locationId,fromDrill){
-  shell(`<div class="center">LoadingÃ¢ÂÂ¦</div>`);
+  shell(`<div class="center">LoadingÃÂ¢ÃÂÃÂ¦</div>`);
   const [{data:lm},{data:calls}] = await Promise.all([
     sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
     sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10)
@@ -297,22 +315,22 @@ async function clientView(locationId,fromDrill){
   if(!lm){$('view').innerHTML=`<div class="center">No data for this location.</div>`;return;}
   const rate=lm.calls>0?Math.round(lm.booked/lm.calls*100):0;
   $('view').innerHTML=`
-    ${fromDrill?`<span class="back" onclick="__back()">Ã¢ÂÂ Back</span>`:''}
-    <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} ÃÂ· AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
-    <div class="kpis">${kpi('Calls answered',fmt(lm.calls),'this month ÃÂ· 24/7')}${kpi('Appointments booked',fmt(lm.booked),rate+'% of calls','g')}${kpi('Minutes used',fmt(lm.minutes),'this month')}${kpi('After-hours saves',fmt(lm.after_hours),'answered off-hours','g')}</div>
+    ${fromDrill?`<span class="back" onclick="__back()">ÃÂ¢ÃÂÃÂ Back</span>`:''}
+    <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} ÃÂÃÂ· AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
+    <div class="kpis">${kpi('Calls answered',fmt(lm.calls),'this month ÃÂÃÂ· 24/7')}${kpi('Appointments booked',fmt(lm.booked),rate+'% of calls','g')}${kpi('Minutes used',fmt(lm.minutes),'this month')}${kpi('After-hours saves',fmt(lm.after_hours),'answered off-hours','g')}</div>
     <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
     <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
 }
 
 function callRow(c){
   const d=new Date(c.started_at), ago=timeAgo(d);
-  const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'Ã¢ÂÂ';
+  const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'ÃÂ¢ÃÂÃÂ';
   const label={booked:'Booked',message:'Message taken',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
   return `<tr><td class="muted">${ago}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
 }
 function callsCard(calls,showLoc){
   const rows=(calls||[]).map(c=>{
-    const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'Ã¢ÂÂ';
+    const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'ÃÂ¢ÃÂÃÂ';
     const label={booked:'Booked',message:'Message',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
     return `<tr><td class="muted">${timeAgo(new Date(c.started_at))}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
   }).join('');
