@@ -243,7 +243,12 @@ async function agencyView(agencyId,fromAdmin){
             <option value="legal_intake">Legal Intake</option>
             <option value="property_management">Property Management</option>
           </select></div>
+          <div><label class="meta">Number source</label><br><select id="newLocNumSource" onchange="__toggleNumSource()" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+            <option value="new">Get a new number</option>
+            <option value="keep">Keep my current number</option>
+          </select></div>
           <div><label class="meta">Area code (optional)</label><br><input id="newLocArea" maxlength="3" style="width:70px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+          <div id="newLocOrigWrap" style="display:none"><label class="meta">Your current business number</label><br><input id="newLocOrig" placeholder="+15551234567" style="width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
           <button class="btn" id="newLocSubmit" type="submit">Add Location</button>
         </div>
         <div id="newLocMsg" class="meta" style="margin-top:8px"></div>
@@ -256,6 +261,11 @@ async function agencyView(agencyId,fromAdmin){
 window.__toggleAddLoc = function(){
   const el = document.getElementById("addLocForm");
   if(el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+window.__toggleNumSource = function(){
+  const mode = document.getElementById("newLocNumSource").value;
+  document.getElementById("newLocOrigWrap").style.display = mode === "keep" ? "block" : "none";
 }
 
 window.__saveGhlWebhook = async function(agencyId){
@@ -276,14 +286,18 @@ window.__submitAddLoc = async function(e, agencyId, fromAdmin){
   const name = document.getElementById("newLocName").value.trim();
   const vertical = document.getElementById("newLocVertical").value;
   const area = document.getElementById("newLocArea").value.trim();
+  const numSource = document.getElementById("newLocNumSource").value;
+  const origNumber = document.getElementById("newLocOrig").value.trim();
   const msgEl = document.getElementById("newLocMsg");
   const btn = document.getElementById("newLocSubmit");
   if(!name || !vertical){ msgEl.textContent = "Business name and vertical are required."; return false; }
+  if(numSource === "keep" && !origNumber){ msgEl.textContent = "Enter your current business number to forward from."; return false; }
   btn.disabled = true; btn.textContent = "Provisioning…"; msgEl.textContent = "";
   try{
     const {data:{session}} = await sb.auth.getSession();
     const body = {business_name:name, vertical};
     if(area) body.area_code = area;
+    if(numSource === "keep"){ body.keep_number = true; body.original_number = origNumber; }
     if(PROFILE.role === "super_admin") body.agency_id = agencyId;
     const resp = await fetch("https://api.flatratevoice.com/api/locations", {
       method:"POST",
@@ -296,13 +310,74 @@ window.__submitAddLoc = async function(e, agencyId, fromAdmin){
       btn.disabled = false; btn.textContent = "Add Location";
       return false;
     }
-    msgEl.textContent = "Success — provisioned " + result.twilio_number + ". Refreshing…";
-    setTimeout(()=>agencyView(agencyId, fromAdmin), 1200);
+    if(result.keep_number){
+      __renderForwardingInstructions(result.twilio_number, result.forwarded_from_number, agencyId, fromAdmin);
+    } else {
+      msgEl.textContent = "Success — provisioned " + result.twilio_number + ". Refreshing…";
+      setTimeout(()=>agencyView(agencyId, fromAdmin), 1200);
+    }
   }catch(err){
     msgEl.textContent = "Network error: " + err.message;
     btn.disabled = false; btn.textContent = "Add Location";
   }
   return false;
+}
+
+/* ---------- KEEP-MY-NUMBER: forwarding instructions ---------- */
+const FORWARDING_CODES = {
+  generic:  { all: {code:"*72[number]", off:"*73", note:"Works on most carriers and landlines. If it doesn't work, pick your specific carrier below."},
+              conditional: {code:"*71[number]", off:"*73", note:"Forwards only when you don't answer, are busy, or are unreachable. If it doesn't work, pick your specific carrier below."} },
+  att:      { all: {code:"*21*[number]#", off:"#21#", note:""},
+              conditional: {code:"**004*[number]#", off:"##004#", note:"This single code covers no-answer, busy, and unreachable together."} },
+  verizon:  { all: {code:"*72[number]", off:"*73", note:""},
+              conditional: {code:"*71[number]", off:"*73", note:"Verizon's conditional code can vary by plan — if it doesn't work, contact Verizon support."} },
+  tmobile:  { all: {code:"**21*[number]#", off:"##21#", note:""},
+              conditional: {code:"**004*[number]#", off:"##004#", note:"This single code covers no-answer, busy, and unreachable together."} }
+};
+
+window.__updateForwardingCode = function(){
+  const carrier = document.getElementById("fwdCarrier").value;
+  const type = document.getElementById("fwdType").value;
+  const data = FORWARDING_CODES[carrier][type];
+  const newNum = document.getElementById("fwdNewNumber").textContent;
+  document.getElementById("fwdCodeDisplay").textContent = data.code.replace("[number]", newNum);
+  document.getElementById("fwdOffDisplay").textContent = data.off;
+  document.getElementById("fwdNote").textContent = data.note || "";
+}
+
+window.__renderForwardingInstructions = function(newNumber, originalNumber, agencyId, fromAdmin){
+  const container = document.getElementById("addLocForm");
+  container.innerHTML = `
+    <div style="padding:12px 0">
+      <h4 style="margin:0 0 4px;font-family:var(--dsp)">Your FlatRateVoice number is ready</h4>
+      <p class="meta" style="margin:0 0 14px">Forward calls from <b class="mono">${originalNumber}</b> to your new number <b class="mono" id="fwdNewNumber">${newNumber}</b> to start using it.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+        <div><label class="meta">When to forward</label><br>
+          <select id="fwdType" onchange="__updateForwardingCode()" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+            <option value="conditional">Only when I can't answer (recommended)</option>
+            <option value="all">All calls, immediately</option>
+          </select>
+        </div>
+        <div><label class="meta">Carrier</label><br>
+          <select id="fwdCarrier" onchange="__updateForwardingCode()" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+            <option value="generic">Not sure / other</option>
+            <option value="att">AT&amp;T</option>
+            <option value="verizon">Verizon</option>
+            <option value="tmobile">T-Mobile</option>
+          </select>
+        </div>
+      </div>
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div class="meta">Dial this from the phone that has ${originalNumber}:</div>
+        <div class="mono" id="fwdCodeDisplay" style="font-size:20px;margin:4px 0;color:var(--cyan)"></div>
+        <div class="meta" style="margin-top:10px">To turn it back off later, dial:</div>
+        <div class="mono" id="fwdOffDisplay" style="font-size:16px;margin:4px 0"></div>
+        <div class="meta" id="fwdNote" style="margin-top:10px;color:var(--amber)"></div>
+      </div>
+      <p class="meta" style="margin-top:12px">Codes can vary by carrier plan and phone model. After setting this up, call ${originalNumber} from another phone to confirm it reaches FlatRateVoice as expected.</p>
+      <button class="btn" onclick="agencyView('${agencyId}',${fromAdmin?'true':'false'})" style="margin-top:10px">Done</button>
+    </div>`;
+  __updateForwardingCode();
 }
 
 /* ---------- CLIENT ---------- */
