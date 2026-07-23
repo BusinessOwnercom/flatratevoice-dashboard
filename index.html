@@ -145,7 +145,7 @@ function shell(inner){
   <div class="wrap" id="view">${inner}</div>`;
   $('signout').onclick=()=>sb.auth.signOut();
   $('refresh').onclick=()=>render();
-  if(!window.__autorefresh){ window.__autorefresh=setInterval(()=>{ const ae=document.activeElement; const editing=ae&&['INPUT','SELECT','TEXTAREA'].includes(ae.tagName); if(PROFILE && !document.hidden && !editing) render(); }, 20000); }
+  if(!window.__autorefresh){ window.__autorefresh=setInterval(()=>{ const ae=document.activeElement; const editing=ae&&['INPUT','SELECT','TEXTAREA'].includes(ae.tagName); if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen) render(); }, 20000); }
 }
 
 function poolCalc(row){
@@ -346,6 +346,7 @@ window.__updateForwardingCode = function(){
 }
 
 window.__renderForwardingInstructions = function(newNumber, originalNumber, agencyId, fromAdmin){
+  window.__fwdInstructionsOpen = true;
   const container = document.getElementById("addLocForm");
   container.innerHTML = `
     <div style="padding:12px 0">
@@ -375,7 +376,7 @@ window.__renderForwardingInstructions = function(newNumber, originalNumber, agen
         <div class="meta" id="fwdNote" style="margin-top:10px;color:var(--amber)"></div>
       </div>
       <p class="meta" style="margin-top:12px">Codes can vary by carrier plan and phone model. After setting this up, call ${originalNumber} from another phone to confirm it reaches FlatRateVoice as expected.</p>
-      <button class="btn" onclick="agencyView('${agencyId}',${fromAdmin?'true':'false'})" style="margin-top:10px">Done</button>
+      <button class="btn" onclick="window.__fwdInstructionsOpen=false;agencyView('${agencyId}',${fromAdmin?'true':'false'})" style="margin-top:10px">Done</button>
     </div>`;
   __updateForwardingCode();
 }
