@@ -145,7 +145,11 @@ function shell(inner){
   <div class="wrap" id="view">${inner}</div>`;
   $('signout').onclick=()=>sb.auth.signOut();
   $('refresh').onclick=()=>render();
-  if(!window.__autorefresh){ window.__autorefresh=setInterval(()=>{ const ae=document.activeElement; const editing=ae&&['INPUT','SELECT','TEXTAREA'].includes(ae.tagName); if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen) render(); }, 20000); }
+  if(!window.__autorefresh){ window.__autorefresh=setInterval(()=>{ const ae=document.activeElement; const editing=ae&&['INPUT','SELECT','TEXTAREA'].includes(ae.tagName); // __onLocationView: the location detail page is for READING (transcripts, call
+  // history), not live monitoring. A background re-render there yanks whatever
+  // you're mid-way through reading off the screen. Use the header refresh button
+  // instead; the overview and agency views still auto-refresh normally.
+  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView) render(); }, 20000); }
 }
 
 function poolCalc(row){
@@ -174,6 +178,7 @@ window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency
 
 /* ---------- SUPER ADMIN ---------- */
 async function adminHome(){
+  window.__onLocationView = false;
   shell(`<div class="center">Loading platform…</div>`);
   const [{data:ags},{data:locs},{data:calls}] = await Promise.all([
     sb.from('agency_month_usage').select('*').order('name'),
@@ -200,6 +205,7 @@ async function adminHome(){
 
 /* ---------- AGENCY ---------- */
 async function agencyView(agencyId,fromAdmin){
+  window.__onLocationView = false;
   shell(`<div class="center">Loading agency…</div>`);
   const [{data:agRows},{data:locs},{data:calls},{data:ghlRow}] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
@@ -383,6 +389,7 @@ window.__renderForwardingInstructions = function(newNumber, originalNumber, agen
 
 /* ---------- CLIENT ---------- */
 async function clientView(locationId,fromDrill){
+  window.__onLocationView = true;
   shell(`<div class="center">Loading…</div>`);
   const [{data:lm},{data:calls},{data:widgetRow}] = await Promise.all([
     sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
