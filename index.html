@@ -384,21 +384,53 @@ window.__renderForwardingInstructions = function(newNumber, originalNumber, agen
 /* ---------- CLIENT ---------- */
 async function clientView(locationId,fromDrill){
   shell(`<div class="center">Loading…</div>`);
-  const [{data:lm},{data:calls}] = await Promise.all([
+  const [{data:lm},{data:calls},{data:widgetRow}] = await Promise.all([
     sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
-    sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10)
-  ]);
+    sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10),
+    sb.from('locations').select('embed_token,widget_enabled,ghl_location_id').eq('id',locationId).maybeSingle()
+    ]);
   if(!lm){$('view').innerHTML=`<div class="center">No data for this location.</div>`;return;}
   const rate=lm.calls>0?Math.round(lm.booked/lm.calls*100):0;
+  const wEnabled = widgetRow && widgetRow.widget_enabled;
+  const wToken = widgetRow && widgetRow.embed_token;
+  const wGhlId = widgetRow ? widgetRow.ghl_location_id : '';
+  const wSnippet = wToken ? `<script src="https://api.flatratevoice.com/widget.js" data-token="${wToken}"><\/script>` : '';
   $('view').innerHTML=`
-    ${fromDrill?`<span class="back" onclick="__back()">← Back</span>`:''}
-    <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} · AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
-    <div class="kpis">${kpi('Calls answered',fmt(lm.calls),'this month · 24/7')}${kpi('Appointments booked',fmt(lm.booked),rate+'% of calls','g')}${kpi('Minutes used',fmt(lm.minutes),'this month')}${kpi('After-hours saves',fmt(lm.after_hours),'answered off-hours','g')}</div>
-    <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
-    <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
+  ${fromDrill?`<span class="back" onclick="__back()">← Back</span>`:''}
+  <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} · AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
+  <div class="kpis">${kpi('Calls answered',fmt(lm.calls),'this month · 24/7')}${kpi('Appointments booked',fmt(lm.booked),rate+'% of calls','g')}${kpi('Minutes used',fmt(lm.minutes),'this month')}${kpi('After-hours saves',fmt(lm.after_hours),'answered off-hours','g')}</div>
+  <div class="card"><div class="card-hd"><h3>Website Widget</h3><span class="meta">embeddable voice widget for this client's website</span></div>
+  <div style="padding:16px 20px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+  <span class="tag ${wEnabled?'booked':'no_booking'}">${wEnabled?'Enabled':'Disabled'}</span>
+  <button class="btn" onclick="__toggleWidget('${wGhlId}',${wEnabled?'true':'false'},'${locationId}',${fromDrill?'true':'false'})">${wEnabled?'Disable':'Enable'} Widget</button>
+  </div>
+  ${wEnabled&&wSnippet?`<label class="meta">Embed snippet — paste into the client's website</label><br>
+  <textarea readonly style="width:100%;margin-top:6px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white);font-family:monospace;font-size:12px" rows="2">${esc(wSnippet)}</textarea>
+  <button class="btn ghost" style="margin-top:8px" onclick="navigator.clipboard.writeText(document.querySelector('textarea').value)">Copy snippet</button>`:''}
+  <div id="widgetMsg" class="meta" style="margin-top:8px"></div>
+  </div></div>
+  <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
+  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
 }
-
-function callRow(c){
+  
+  window.__toggleWidget = async function(ghlLocationId, currentlyEnabled, locationId, fromDrill){
+    try{
+      const {data:{session}} = await sb.auth.getSession();
+      const resp = await fetch(`https://api.flatratevoice.com/api/locations/${ghlLocationId}/widget`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+session.access_token},
+        body: JSON.stringify({enabled: !currentlyEnabled})
+      });
+      const result = await resp.json();
+      if(!resp.ok || !result.ok){ alert("Error: " + (result.error || "unknown error")); return; }
+      clientView(locationId, fromDrill);
+    }catch(err){
+      alert("Network error: " + err.message);
+    }
+  };
+  
+  function callRow(c){
   const d=new Date(c.started_at), ago=timeAgo(d);
   const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'—';
   const label={booked:'Booked',message:'Message taken',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
