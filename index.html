@@ -411,8 +411,39 @@ async function clientView(locationId,fromDrill){
   <div id="widgetMsg" class="meta" style="margin-top:8px"></div>
   </div></div>
   <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
-  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
+  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>
+  <div class="card"><div class="card-hd"><h3>Call Transcripts</h3><span class="meta">stored permanently · full text for the last 90 days</span><button class="btn ghost" onclick="__loadTranscripts('${wGhlId}')">Load transcripts</button></div>
+  <div id="transcriptBox" style="padding:16px 20px"><div class="muted">Click "Load transcripts" to view conversation history.</div></div></div>`;
 }
+
+  window.__loadTranscripts = async function(ghlLocationId){
+    const box = document.getElementById("transcriptBox");
+    if(!ghlLocationId){ box.innerHTML = '<div class="muted">This location has no tracking ID yet.</div>'; return; }
+    box.innerHTML = '<div class="muted">Loading…</div>';
+    try{
+      const {data:{session}} = await sb.auth.getSession();
+      const resp = await fetch(`https://api.flatratevoice.com/api/locations/${ghlLocationId}/transcripts`, {
+        headers:{"Authorization":"Bearer "+session.access_token}
+      });
+      const result = await resp.json();
+      if(!resp.ok || !result.ok){ box.innerHTML = '<div class="muted">Error: '+esc(result.error||'unknown')+'</div>'; return; }
+      if(!result.calls.length){ box.innerHTML = '<div class="muted">No calls recorded yet.</div>'; return; }
+      box.innerHTML = result.calls.map(c=>{
+        const when = new Date(c.started_at).toLocaleString();
+        const dur = c.duration_seconds ? Math.floor(c.duration_seconds/60)+':'+String(c.duration_seconds%60).padStart(2,'0') : '—';
+        const head = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px"><b class="mono">${esc(when)}</b><span class="muted">${esc(c.caller_number||c.channel||'')}</span><span class="muted">${dur}</span><span class="tag ${esc(c.outcome||'other')}">${esc(c.outcome||'—')}</span></div>`;
+        if(c.locked){
+          return `<div style="padding:12px 0;border-bottom:1px solid var(--border)">${head}<div class="muted">🔒 Older than ${result.free_window_days} days — stored safely, but viewing archived transcripts requires the extended access add-on. Contact us to unlock.</div></div>`;
+        }
+        const body = (c.transcript||[]).length
+          ? `<div style="background:var(--s1);border-radius:6px;padding:10px;font-size:13px;line-height:1.6">${c.transcript.map(t=>`<div><b>${esc(t.role)}:</b> ${esc(t.content)}</div>`).join('')}</div>`
+          : '<div class="muted">No transcript captured for this call.</div>';
+        return `<div style="padding:12px 0;border-bottom:1px solid var(--border)">${head}${body}</div>`;
+      }).join('');
+    }catch(err){
+      box.innerHTML = '<div class="muted">Network error: '+esc(err.message)+'</div>';
+    }
+  };
   
   window.__toggleWidget = async function(ghlLocationId, currentlyEnabled, locationId, fromDrill){
     try{
