@@ -576,6 +576,7 @@ window.__saveAgencyGhlContacts = async function(agencyId, saveAnyway){
   const pit = $('agyGhlPit').value, cid = $('agyGhlCid').value.trim(), mode = $('agyGhlMode').value;
   const built = __ghlBuildBody(pit, cid, mode, saveAnyway);
   if(built.error){ __ghlMsg('agyGhlMsg', esc(built.error), 'err'); return; }
+  built.body.agency_id = agencyId;
   const btn = $('agyGhlSaveBtn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   __ghlMsg('agyGhlMsg', 'Saving…', '');
   try{
@@ -603,7 +604,7 @@ window.__clearAgencyGhlContacts = async function(agencyId){
   if(!confirm('Clear the agency default (PIT, Sub-Account ID, and greeting mode) for GHL contact recognition?')) return;
   __ghlMsg('agyGhlMsg', 'Clearing…', '');
   try{
-    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/ghl-contacts', {clear:true});
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/ghl-contacts', {clear:true, agency_id: agencyId});
     if(!resp.ok || result.ok===false || result.error){ __ghlMsg('agyGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err'); return; }
     __ghlMsg('agyGhlMsg', 'Cleared. No agency-wide default is set.', 'ok');
     $('agyGhlPit').value=''; $('agyGhlCid').value=''; $('agyGhlMode').value='off';
