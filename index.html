@@ -149,7 +149,7 @@ function shell(inner){
   // history), not live monitoring. A background re-render there yanks whatever
   // you're mid-way through reading off the screen. Use the header refresh button
   // instead; the overview and agency views still auto-refresh normally.
-  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView && !window.__agyGhlEditing) render(); }, 20000); }
+  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView && !window.__agyGhlEditing) render(); }, 300000); }
 }
 
 function poolCalc(row){
