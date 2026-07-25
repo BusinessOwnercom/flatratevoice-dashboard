@@ -149,7 +149,7 @@ function shell(inner){
   // history), not live monitoring. A background re-render there yanks whatever
   // you're mid-way through reading off the screen. Use the header refresh button
   // instead; the overview and agency views still auto-refresh normally.
-  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView) render(); }, 20000); }
+  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView && !window.__agyGhlEditing) render(); }, 20000); }
 }
 
 function poolCalc(row){
@@ -206,6 +206,7 @@ async function adminHome(){
 /* ---------- AGENCY ---------- */
 async function agencyView(agencyId,fromAdmin){
   window.__onLocationView = false;
+  window.__agyGhlEditing = false;
   shell(`<div class="center">Loading agency…</div>`);
   const [{data:agRows},{data:locs},{data:calls},{data:ghlRow}] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
@@ -233,11 +234,11 @@ async function agencyView(agencyId,fromAdmin){
       <div id="agyGhlMsg" class="msg" style="margin-bottom:12px;display:none"></div>
       <div style="display:grid;gap:12px;max-width:540px">
         <div><label class="meta">GHL Private Integration Token (PIT)</label><br>
-          <input id="agyGhlPit" type="password" autocomplete="new-password" placeholder="Enter to set or update — never shown back" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+          <input id="agyGhlPit" type="password" autocomplete="new-password" oninput="window.__agyGhlEditing=true" placeholder="Enter to set or update — never shown back" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
         <div><label class="meta">GHL Sub-Account ID <span class="muted">(contacts_location_id)</span></label><br>
-          <input id="agyGhlCid" type="text" autocomplete="off" placeholder="Sub-account whose contacts callers are matched against" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+          <input id="agyGhlCid" type="text" autocomplete="off" oninput="window.__agyGhlEditing=true" placeholder="Sub-account whose contacts callers are matched against" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
         <div><label class="meta">Greeting mode</label><br>
-          <select id="agyGhlMode" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+          <select id="agyGhlMode" onchange="window.__agyGhlEditing=true" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
             <option value="off">Off — don't greet by name</option>
             <option value="name">Name — greet a known caller by name</option>
             <option value="confirm">Confirm — ask the caller to confirm their identity</option>
@@ -591,6 +592,7 @@ window.__saveAgencyGhlContacts = async function(agencyId, saveAnyway){
     }
     __ghlMsg('agyGhlMsg', 'Saved. This is now the agency-wide default.', 'ok');
     $('agyGhlPit').value=''; $('agyGhlCid').value='';
+    window.__agyGhlEditing = false;
     if(btn){ btn.disabled=false; btn.textContent='Save agency default'; }
   }catch(err){
     __ghlMsg('agyGhlMsg', 'Network error: '+esc(err.message), 'err');
@@ -605,6 +607,7 @@ window.__clearAgencyGhlContacts = async function(agencyId){
     if(!resp.ok || result.ok===false || result.error){ __ghlMsg('agyGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err'); return; }
     __ghlMsg('agyGhlMsg', 'Cleared. No agency-wide default is set.', 'ok');
     $('agyGhlPit').value=''; $('agyGhlCid').value=''; $('agyGhlMode').value='off';
+    window.__agyGhlEditing = false;
   }catch(err){ __ghlMsg('agyGhlMsg', 'Network error: '+esc(err.message), 'err'); }
 };
 
