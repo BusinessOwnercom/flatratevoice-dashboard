@@ -228,6 +228,27 @@ async function agencyView(agencyId,fromAdmin){
     <div style="padding:16px 20px"><label class="meta">Inbound Webhook URL</label><br>
       <div style="display:flex;gap:10px;margin-top:6px"><input id="ghlWebhookInput" value="${esc((ghlRow&&ghlRow.ghl_webhook_url)||'')}" placeholder="https://services.leadconnectorhq.com/hooks/..." style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"><button class="btn" onclick="__saveGhlWebhook('${agencyId}')">Save</button></div>
       <div id="ghlWebhookMsg" class="meta" style="margin-top:8px"></div></div></div>
+    <div class="card"><div class="card-hd"><h3>GHL Contact Recognition — Agency Default</h3><span class="meta">applies to every location unless a location sets its own override</span></div>
+    <div style="padding:16px 20px">
+      <div id="agyGhlMsg" class="msg" style="margin-bottom:12px;display:none"></div>
+      <div style="display:grid;gap:12px;max-width:540px">
+        <div><label class="meta">GHL Private Integration Token (PIT)</label><br>
+          <input id="agyGhlPit" type="password" autocomplete="new-password" placeholder="Enter to set or update — never shown back" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+        <div><label class="meta">GHL Sub-Account ID <span class="muted">(contacts_location_id)</span></label><br>
+          <input id="agyGhlCid" type="text" autocomplete="off" placeholder="Sub-account whose contacts callers are matched against" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+        <div><label class="meta">Greeting mode</label><br>
+          <select id="agyGhlMode" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+            <option value="off">Off — don't greet by name</option>
+            <option value="name">Name — greet a known caller by name</option>
+            <option value="confirm">Confirm — ask the caller to confirm their identity</option>
+          </select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn" id="agyGhlSaveBtn" onclick="__saveAgencyGhlContacts('${agencyId}')">Save agency default</button>
+        <button class="btn ghost" onclick="__clearAgencyGhlContacts('${agencyId}')">Clear</button>
+      </div>
+      <div class="meta" style="margin-top:10px">The PIT is write-only: it's validated against GHL on save and never returned to this dashboard, so this field always starts blank. Enter the PIT and Sub-Account ID together — greeting mode can be changed on its own. "Clear" unsets all three agency-wide.</div>
+    </div></div>
     <div class="kpis">${kpi('Minutes used',fmt(p.used),'of '+fmt(p.t.pool)+' pooled',p.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi('Projected bill',money(p.bill),p.over>0?'incl. '+fmt(p.over)+' min overage':'within pool',p.over>0?'r':'g')}</div>
     <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base · overage $${p.t.ovg.toFixed(2)}/min</span></div>
     <div class="pool"><div class="pool-top"><div class="big">${fmt(p.used)} / ${fmt(p.t.pool)} min</div><div class="small">${p.over>0?`<span class="tag over">${fmt(p.over)} min over</span>`:fmt(p.t.pool-p.used)+' min left'}</div></div>
@@ -417,10 +438,35 @@ async function clientView(locationId,fromDrill){
   <button class="btn ghost" style="margin-top:8px" onclick="navigator.clipboard.writeText(document.querySelector('textarea').value)">Copy snippet</button>`:''}
   <div id="widgetMsg" class="meta" style="margin-top:8px"></div>
   </div></div>
+  <div class="card"><div class="card-hd"><h3>GHL Contact Recognition — This Location</h3><span class="meta">per-location override</span></div>
+  <div style="padding:16px 20px">
+  ${wGhlId ? `
+    <div id="locGhlStatus" class="meta" style="margin-bottom:12px">Loading current status…</div>
+    <div id="locGhlMsg" class="msg" style="margin-bottom:12px;display:none"></div>
+    <div style="display:grid;gap:12px;max-width:540px">
+      <div><label class="meta">GHL Private Integration Token (PIT)</label><br>
+        <input id="locGhlPit" type="password" autocomplete="new-password" placeholder="Leave blank to inherit / keep current" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      <div><label class="meta">GHL Sub-Account ID <span class="muted">(contacts_location_id)</span></label><br>
+        <input id="locGhlCid" type="text" autocomplete="off" placeholder="Leave blank to inherit the agency default" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      <div><label class="meta">Greeting mode</label><br>
+        <select id="locGhlMode" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+          <option value="off">Off — don't greet by name</option>
+          <option value="name">Name — greet a known caller by name</option>
+          <option value="confirm">Confirm — ask the caller to confirm their identity</option>
+        </select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn" id="locGhlSaveBtn" onclick="__saveLocationGhlContacts('${wGhlId}','${locationId}',${fromDrill?'true':'false'})">Save override</button>
+      <button class="btn ghost" onclick="__clearLocationGhlContacts('${wGhlId}','${locationId}',${fromDrill?'true':'false'})">Clear override</button>
+    </div>
+    <div class="meta" style="margin-top:10px"><b>Leaving the PIT and Sub-Account ID blank means this location inherits the agency default.</b> Enter both together to set a per-location override. Greeting mode can be changed on its own. The PIT is write-only and never shown back, so it always starts blank.</div>
+  ` : `<div class="muted">This location doesn't have a GHL location ID yet, so contact recognition can't be configured here.</div>`}
+  </div></div>
   <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
   <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>
   <div class="card"><div class="card-hd"><h3>Call Transcripts</h3><span class="meta">stored permanently · full text for the last 90 days</span><button class="btn ghost" onclick="__loadTranscripts('${wGhlId}')">Load transcripts</button></div>
   <div id="transcriptBox" style="padding:16px 20px"><div class="muted">Click "Load transcripts" to view conversation history.</div></div></div>`;
+  if(wGhlId) __loadGhlContactStatus(wGhlId);
 }
 
   window.__loadTranscripts = async function(ghlLocationId){
@@ -484,6 +530,150 @@ function callsCard(calls,showLoc){
   <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${rows||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
 }
 function timeAgo(d){const s=(Date.now()-d.getTime())/1000;if(s<3600)return Math.max(1,Math.floor(s/60))+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
+
+/* ---------- GHL CONTACT RECOGNITION ---------- */
+// Shared helpers. __ghlMsg/__ghlPost are module-scoped (only called from the
+// window.* handlers below). The window.* handlers are what the inline onclick
+// attributes reach, matching the existing window.__ wiring in this file.
+function __ghlMsg(elId, html, kind){
+  const m = $(elId); if(!m) return;
+  m.className = 'msg'; m.style.display = 'block'; m.style.background=''; m.style.color='';
+  if(kind==='err'){ m.className='msg err'; }
+  else if(kind==='ok'){ m.className='msg ok'; }
+  else if(kind==='warn'){ m.style.background='rgba(255,200,97,.1)'; m.style.color='var(--amber)'; }
+  else { m.style.background='var(--s3)'; m.style.color='var(--slate2)'; }
+  m.innerHTML = html;
+}
+async function __ghlPost(url, body){
+  const {data:{session}} = await sb.auth.getSession();
+  const resp = await fetch(url, {
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+session.access_token},
+    body: JSON.stringify(body)
+  });
+  let result = {};
+  try{ result = await resp.json(); }catch(e){ /* non-JSON / empty body */ }
+  return {resp, result};
+}
+// Build a credentials payload from a pit/cid/mode tri.  Returns {error} when the
+// pair is half-filled, or {body} ready to POST.  pit + contacts_location_id must
+// travel together; greeting_mode alone is allowed (no credential change).
+function __ghlBuildBody(pit, cid, mode, saveAnyway){
+  const hasPit = pit.length>0, hasCid = cid.length>0;
+  if(hasPit !== hasCid){
+    return {error:"Enter the PIT and Sub-Account ID together — or leave both blank. You filled in only one."};
+  }
+  const body = { greeting_mode: mode };
+  if(hasPit && hasCid){ body.pit = pit; body.contacts_location_id = cid; }
+  if(saveAnyway) body.save_anyway = true;
+  return {body};
+}
+window.__ghlDismiss = function(elId){ const m=$(elId); if(m){ m.style.display='none'; m.innerHTML=''; } };
+
+/* --- Agency-wide default --- */
+window.__saveAgencyGhlContacts = async function(agencyId, saveAnyway){
+  const pit = $('agyGhlPit').value, cid = $('agyGhlCid').value.trim(), mode = $('agyGhlMode').value;
+  const built = __ghlBuildBody(pit, cid, mode, saveAnyway);
+  if(built.error){ __ghlMsg('agyGhlMsg', esc(built.error), 'err'); return; }
+  const btn = $('agyGhlSaveBtn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  __ghlMsg('agyGhlMsg', 'Saving…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/ghl-contacts', built.body);
+    if(result.can_save_anyway && !saveAnyway){
+      __ghlMsg('agyGhlMsg', "GHL couldn't be reached right now — save anyway? <button class=\"btn\" style=\"padding:4px 10px;margin-left:8px\" onclick=\"__saveAgencyGhlContacts('"+agencyId+"',true)\">Save anyway</button> <button class=\"btn ghost\" style=\"padding:4px 10px\" onclick=\"__ghlDismiss('agyGhlMsg')\">Cancel</button>", 'warn');
+      if(btn){ btn.disabled=false; btn.textContent='Save agency default'; }
+      return;
+    }
+    if(!resp.ok || result.ok===false || result.error){
+      __ghlMsg('agyGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err');
+      if(btn){ btn.disabled=false; btn.textContent='Save agency default'; }
+      return;
+    }
+    __ghlMsg('agyGhlMsg', 'Saved. This is now the agency-wide default.', 'ok');
+    $('agyGhlPit').value=''; $('agyGhlCid').value='';
+    if(btn){ btn.disabled=false; btn.textContent='Save agency default'; }
+  }catch(err){
+    __ghlMsg('agyGhlMsg', 'Network error: '+esc(err.message), 'err');
+    if(btn){ btn.disabled=false; btn.textContent='Save agency default'; }
+  }
+};
+window.__clearAgencyGhlContacts = async function(agencyId){
+  if(!confirm('Clear the agency default (PIT, Sub-Account ID, and greeting mode) for GHL contact recognition?')) return;
+  __ghlMsg('agyGhlMsg', 'Clearing…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/ghl-contacts', {clear:true});
+    if(!resp.ok || result.ok===false || result.error){ __ghlMsg('agyGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err'); return; }
+    __ghlMsg('agyGhlMsg', 'Cleared. No agency-wide default is set.', 'ok');
+    $('agyGhlPit').value=''; $('agyGhlCid').value=''; $('agyGhlMode').value='off';
+  }catch(err){ __ghlMsg('agyGhlMsg', 'Network error: '+esc(err.message), 'err'); }
+};
+
+/* --- Per-location override --- */
+window.__loadGhlContactStatus = async function(ghlLocationId){
+  const box = $('locGhlStatus'); if(!box) return;
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+ghlLocationId+'/ghl-contacts', {
+      headers:{"Authorization":"Bearer "+session.access_token}
+    });
+    let result = {}; try{ result = await resp.json(); }catch(e){}
+    if(!resp.ok){ box.innerHTML = '<span class="muted">Couldn\'t load current status ('+esc(result.error||('HTTP '+resp.status))+').</span>'; return; }
+    const gm = result.greeting_mode || 'off';
+    if(!result.configured){
+      box.innerHTML = '<span class="tag no_booking">Not configured</span> Contact recognition is off here and no agency default applies. Set values below to turn it on.';
+    } else if(result.source === 'location'){
+      box.innerHTML = '<span class="tag booked">Set on this location</span> Using a per-location override. Greeting mode: <b>'+esc(gm)+'</b>.';
+    } else if(result.source === 'agency'){
+      box.innerHTML = '<span class="tag transferred">Inherited from agency default</span> No per-location override. Greeting mode: <b>'+esc(gm)+'</b>. Fill in the fields below to override for this location only.';
+    } else {
+      box.innerHTML = '<span class="tag booked">Configured</span> Greeting mode: <b>'+esc(gm)+'</b>.';
+    }
+    // Reflect the resolved greeting mode in the selector, but never stomp a value
+    // the user is actively editing.
+    const sel = $('locGhlMode');
+    if(sel && result.greeting_mode && document.activeElement !== sel){ sel.value = result.greeting_mode; }
+  }catch(err){ box.innerHTML = '<span class="muted">Couldn\'t load current status ('+esc(err.message)+').</span>'; }
+};
+window.__saveLocationGhlContacts = async function(ghlLocationId, locationId, fromDrill, saveAnyway){
+  if(!ghlLocationId){ __ghlMsg('locGhlMsg', 'This location has no GHL location ID.', 'err'); return; }
+  const pit = $('locGhlPit').value, cid = $('locGhlCid').value.trim(), mode = $('locGhlMode').value;
+  const built = __ghlBuildBody(pit, cid, mode, saveAnyway);
+  if(built.error){ __ghlMsg('locGhlMsg', esc(built.error), 'err'); return; }
+  const btn = $('locGhlSaveBtn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  __ghlMsg('locGhlMsg', 'Saving…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/locations/'+ghlLocationId+'/ghl-contacts', built.body);
+    if(result.can_save_anyway && !saveAnyway){
+      __ghlMsg('locGhlMsg', "GHL couldn't be reached right now — save anyway? <button class=\"btn\" style=\"padding:4px 10px;margin-left:8px\" onclick=\"__saveLocationGhlContacts('"+ghlLocationId+"','"+locationId+"',"+(fromDrill?'true':'false')+",true)\">Save anyway</button> <button class=\"btn ghost\" style=\"padding:4px 10px\" onclick=\"__ghlDismiss('locGhlMsg')\">Cancel</button>", 'warn');
+      if(btn){ btn.disabled=false; btn.textContent='Save override'; }
+      return;
+    }
+    if(!resp.ok || result.ok===false || result.error){
+      __ghlMsg('locGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err');
+      if(btn){ btn.disabled=false; btn.textContent='Save override'; }
+      return;
+    }
+    __ghlMsg('locGhlMsg', 'Saved. This location now uses its own override.', 'ok');
+    $('locGhlPit').value=''; $('locGhlCid').value='';
+    if(btn){ btn.disabled=false; btn.textContent='Save override'; }
+    __loadGhlContactStatus(ghlLocationId);
+  }catch(err){
+    __ghlMsg('locGhlMsg', 'Network error: '+esc(err.message), 'err');
+    if(btn){ btn.disabled=false; btn.textContent='Save override'; }
+  }
+};
+window.__clearLocationGhlContacts = async function(ghlLocationId, locationId, fromDrill){
+  if(!ghlLocationId){ return; }
+  if(!confirm('Clear this location\'s override? It will go back to inheriting the agency default.')) return;
+  __ghlMsg('locGhlMsg', 'Clearing…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/locations/'+ghlLocationId+'/ghl-contacts', {clear:true});
+    if(!resp.ok || result.ok===false || result.error){ __ghlMsg('locGhlMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err'); return; }
+    __ghlMsg('locGhlMsg', 'Override cleared — now inheriting the agency default.', 'ok');
+    $('locGhlPit').value=''; $('locGhlCid').value=''; $('locGhlMode').value='off';
+    __loadGhlContactStatus(ghlLocationId);
+  }catch(err){ __ghlMsg('locGhlMsg', 'Network error: '+esc(err.message), 'err'); }
+};
 
 boot();
 </script>
