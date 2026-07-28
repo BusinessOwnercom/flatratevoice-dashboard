@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>FlatRateVoice — Usage Dashboard</title>
+<title>Usage Dashboard</title>
 <meta name="robots" content="noindex"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet"/>
@@ -64,6 +64,15 @@ tbody tr.click{cursor:pointer;transition:background .12s}tbody tr.click:hover{ba
 .msg.ok{background:rgba(68,221,136,.1);color:var(--green);display:block}
 .lnk{font-size:12px;color:var(--slate4);text-align:center;margin-top:14px}.lnk a{cursor:pointer}
 .center{text-align:center;padding:60px 20px;color:var(--slate4)}
+/* product switcher + brand-agnostic accent tints (recolor via --cyan) */
+.ptabs{display:flex;gap:6px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:3px}
+.ptab{background:transparent;color:var(--slate4);border-radius:7px;padding:6px 14px;font-weight:700;font-size:12px;font-family:var(--dsp);letter-spacing:.02em}
+.ptab.on{background:var(--s3);color:var(--white);box-shadow:inset 0 0 0 1px var(--borderlit)}
+.pill{background:color-mix(in srgb,var(--cyan) 12%,transparent);border-color:color-mix(in srgb,var(--cyan) 34%,transparent)}
+.tag.transferred{background:color-mix(in srgb,var(--cyan) 12%,transparent)}
+.kpi .v.acc{color:var(--cyan)}
+.note{font-size:12px;color:var(--slate4);margin-top:10px;line-height:1.5}
+.lanebadge{display:inline-flex;align-items:center;gap:7px;font-family:var(--dsp);font-weight:700;font-size:13px;color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,transparent);border:1px solid color-mix(in srgb,var(--cyan) 30%,transparent);border-radius:100px;padding:5px 13px}
 @media(max-width:820px){.kpis{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}}
 </style>
 </head>
@@ -81,7 +90,49 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const TIER = { starter:{pool:2500,price:297,ovg:.07}, growth:{pool:6000,price:497,ovg:.07}, scale:{pool:12000,price:997,ovg:.05} };
 const $ = s => document.getElementById(s);
 const root = $('root');
-let PROFILE=null, NAV={};
+let PROFILE=null, NAV={}, PRODUCTS=[];
+
+/* ===== BRAND (switches by hostname; one codebase serves both domains) ===== */
+const IS_FRC = /compute/i.test(location.hostname);
+const BRAND = IS_FRC ? {
+  key:'frc', primary:'frc', name:'FlatRateCompute',
+  fonts:'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap',
+  vars:{
+    '--black':'#0A1628','--s1':'#0E1E38','--s2':'#11203A','--s3':'#16294A',
+    '--border':'#1E3355','--borderlit':'#2A4670',
+    '--cyan':'#FFB000','--green':'#3DDC84','--red':'#FF4D4D','--amber':'#FFC73D','--white':'#F5F7FA',
+    '--dsp':"'IBM Plex Mono',ui-monospace,monospace",'--body':"'IBM Plex Sans',system-ui,sans-serif"
+  }
+} : { key:'frv', primary:'frv', name:'FlatRateVoice', fonts:null, vars:{} };
+const PLABEL = { frv:'Voice', frc:'Compute' };
+const LOGO = '<svg width="22" height="15" viewBox="0 0 28 20" fill="none">' + (IS_FRC
+  ? '<rect x="3" y="4" width="2.4" height="12" rx="1" fill="var(--cyan)" opacity=".55"/><rect x="7.4" y="4" width="2.4" height="12" rx="1" fill="var(--cyan)"/><rect x="11.8" y="4" width="2.4" height="12" rx="1" fill="var(--cyan)" opacity=".7"/><rect x="16.2" y="4" width="2.4" height="12" rx="1" fill="var(--cyan)" opacity=".85"/>'
+  : '<rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="var(--cyan)" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="var(--cyan)"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="var(--cyan)" opacity=".72"/>'
+) + '</svg>';
+function applyBrand(){
+  const r=document.documentElement;
+  for(const k in BRAND.vars) r.style.setProperty(k, BRAND.vars[k]);
+  if(BRAND.fonts){ const l=document.createElement('link'); l.rel='stylesheet'; l.href=BRAND.fonts; document.head.appendChild(l); }
+  document.title = BRAND.name+' — Usage Dashboard';
+}
+applyBrand();
+
+// enabled products for the signed-in user's scope; drives which tabs/views show
+async function loadProducts(){
+  if(PROFILE.role==='super_admin'){ PRODUCTS=['frv','frc']; return; }
+  let agencyId=PROFILE.agency_id;
+  if(!agencyId && PROFILE.location_id){
+    const {data:loc}=await sb.from('locations').select('agency_id').eq('id',PROFILE.location_id).maybeSingle();
+    agencyId=loc&&loc.agency_id;
+  }
+  let prods=[];
+  if(agencyId){
+    const {data:rows}=await sb.from('agency_products').select('product').eq('agency_id',agencyId).eq('enabled',true);
+    prods=(rows||[]).map(r=>r.product);
+  }
+  PRODUCTS = prods.length?prods:[BRAND.primary]; // fallback: this domain's product
+}
+window.__setProduct=(p)=>{ NAV.product=p; render(); };
 
 const fmt=n=>Math.round(Number(n||0)).toLocaleString();
 const money=n=>'$'+Math.round(Number(n||0)).toLocaleString();
@@ -92,7 +143,7 @@ function loginScreen(mode='signin'){
   root.innerHTML = `
   <div class="login">
     <div class="login-hd">
-      <div class="logo" style="justify-content:center"><svg width="26" height="16" viewBox="0 0 28 20" fill="none"><rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="#00D4FF" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="#00D4FF"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="#00D4FF" opacity=".72"/></svg> FlatRateVoice</div>
+      <div class="logo" style="justify-content:center">${LOGO} ${BRAND.name}</div>
       <h2>${mode==='signup'?'Create your account':'Sign in'}</h2>
       <p>Usage dashboard</p>
     </div>
@@ -131,6 +182,7 @@ async function boot(){
   if(error){root.innerHTML=`<div class="center">Error loading profile: ${esc(error.message)}</div>`;return;}
   if(!prof){root.innerHTML=`<div class="center">Signed in as ${esc(session.user.email)} but no profile row yet. Ask an admin to set your role.<br><br><button class="btn ghost" id="out">Sign out</button></div>`;$('out').onclick=()=>sb.auth.signOut();return;}
   PROFILE={...prof,email:session.user.email};
+  await loadProducts();
   render();
 }
 sb.auth.onAuthStateChange((_e,s)=>{ if(s) boot(); else loginScreen('signin'); });
@@ -139,7 +191,8 @@ sb.auth.onAuthStateChange((_e,s)=>{ if(s) boot(); else loginScreen('signin'); })
 function shell(inner){
   root.innerHTML=`
   <div class="topbar">
-    <div class="logo"><svg width="24" height="16" viewBox="0 0 28 20" fill="none"><rect x="4.9" y="5.5" width="1.6" height="9" rx=".8" fill="#00D4FF" opacity=".8"/><rect x="7.1" y="4" width="1.6" height="12" rx=".8" fill="#00D4FF"/><rect x="9.3" y="6" width="1.6" height="8" rx=".8" fill="#00D4FF" opacity=".72"/></svg> FlatRateVoice</div>
+    <div class="logo">${LOGO} ${BRAND.name}</div>
+    ${PRODUCTS.length>1?`<div class="ptabs">${PRODUCTS.map(p=>`<button class="ptab ${p===NAV.product?'on':''}" onclick="__setProduct('${p}')">${PLABEL[p]||p}</button>`).join('')}</div>`:''}
     <div class="who"><span style="color:var(--green)">● live</span><span><b>${esc(PROFILE.full_name||PROFILE.email)}</b> · ${PROFILE.role.replace('_',' ')}</span><button class="btn ghost" id="refresh">⟳</button><button class="btn ghost" id="signout">Sign out</button></div>
   </div>
   <div class="wrap" id="view">${inner}</div>`;
@@ -161,6 +214,14 @@ function kpi(l,v,d,cls){return `<div class="kpi"><div class="l">${l}</div><div c
 
 /* ---------- ROUTER ---------- */
 async function render(){
+  // resolve active product against what this user actually has enabled
+  const enabled = PRODUCTS.length?PRODUCTS:[BRAND.primary];
+  let ap = NAV.product;
+  if(!enabled.includes(ap)) ap = enabled.includes(BRAND.primary)?BRAND.primary:enabled[0];
+  NAV.product = ap;
+  return ap==='frc' ? renderFRC() : renderFRV();
+}
+function renderFRV(){
   const r=PROFILE.role;
   if(r==='super_admin'){
     if(NAV.location) return clientView(NAV.location,true);
@@ -172,6 +233,19 @@ async function render(){
     return agencyView(PROFILE.agency_id,false);
   }
   return clientView(PROFILE.location_id,false); // client_user
+}
+function renderFRC(){
+  const r=PROFILE.role;
+  if(r==='super_admin'){
+    if(NAV.location) return clientViewFRC(NAV.location,true);
+    if(NAV.agency) return agencyViewFRC(NAV.agency,true);
+    return adminHomeFRC();
+  }
+  if(r==='agency_admin'){
+    if(NAV.location) return clientViewFRC(NAV.location,true);
+    return agencyViewFRC(PROFILE.agency_id,false);
+  }
+  return clientViewFRC(PROFILE.location_id,false); // client_user
 }
 window.__go=(t,id)=>{NAV[t]=id;render();};
 window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency; render(); };
@@ -678,6 +752,98 @@ window.__clearLocationGhlContacts = async function(ghlLocationId, locationId, fr
     __loadGhlContactStatus(ghlLocationId);
   }catch(err){ __ghlMsg('locGhlMsg', 'Network error: '+esc(err.message), 'err'); }
 };
+
+/* ============================================================
+   FLATRATECOMPUTE (FRC) VIEWS
+   FRC bills per concurrent lane (flat rate, tokens unmetered).
+   frc_usage_daily (requests + tokens by fast/standard/heavy) is
+   shown as throughput telemetry, NOT as a billing meter.
+   ============================================================ */
+const fmtTok = n => { n=Number(n||0); if(n>=1e9) return (n/1e9).toFixed(1)+'B'; if(n>=1e6) return (n/1e6).toFixed(n>=1e7?0:1)+'M'; if(n>=1e3) return (n/1e3).toFixed(0)+'k'; return String(Math.round(n)); };
+const TIERS = ['fast','standard','heavy'];
+function monthStartUTC(){ const d=new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0,10); }
+function tierAgg(rows){ const T={fast:{r:0,i:0,o:0},standard:{r:0,i:0,o:0},heavy:{r:0,i:0,o:0}}; (rows||[]).forEach(x=>{ const t=T[x.tier]; if(!t) return; t.r+=Number(x.requests||0); t.i+=Number(x.tokens_in||0); t.o+=Number(x.tokens_out||0); }); return T; }
+function tierTable(T){
+  const rows = TIERS.map(k=>{ const t=T[k]; return `<tr><td class="name" style="text-transform:capitalize">${k}</td><td class="mono">${fmt(t.r)}</td><td class="mono">${fmtTok(t.i)}</td><td class="mono">${fmtTok(t.o)}</td></tr>`; }).join('');
+  return `<div class="card"><div class="card-hd"><h3>Throughput by tier</h3><span class="meta">this month · fast / standard / heavy</span></div>
+    <table><thead><tr><th>Tier</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---------- FRC: SUPER ADMIN ---------- */
+async function adminHomeFRC(){
+  window.__onLocationView=false;
+  shell(`<div class="center">Loading compute…</div>`);
+  const {data:ags} = await sb.from('agency_month_frc').select('*').order('name');
+  const list = ags||[];
+  const lanes = list.reduce((s,a)=>s+Number(a.lanes||0),0);
+  const mrr   = list.reduce((s,a)=>s+Number(a.monthly_price||0),0);
+  const reqs  = list.reduce((s,a)=>s+Number(a.requests_month||0),0);
+  const rows = list.map(a=>`<tr class="click" onclick="__go('agency','${a.agency_id}')">
+    <td class="name">${esc(a.name)}</td>
+    <td>${a.enabled===false?'<span class="tag no_booking">paused</span>':'<span class="tag booked">active</span>'}</td>
+    <td class="mono">${a.lanes!=null?fmt(a.lanes):'<span class="muted">—</span>'}</td>
+    <td class="mono">${fmt(a.requests_month)}</td>
+    <td class="mono">${fmtTok(Number(a.tokens_in_month)+Number(a.tokens_out_month))}</td>
+    <td class="mono">${a.monthly_price!=null?money(a.monthly_price):'<span class="muted">quote</span>'}</td></tr>`).join('');
+  $('view').innerHTML=`
+    <div class="viewhead"><div><div class="crumbs">All compute agencies</div><h1>Compute overview</h1><div class="sub">Bare-metal lanes · tokens unmetered inside each lane.</div></div><span class="pill">SUPER ADMIN</span></div>
+    <div class="kpis">${kpi('Agencies',list.length,'on compute')}${kpi('Lanes provisioned',fmt(lanes),'concurrent')}${kpi('Requests this month',fmt(reqs),'all agencies')}${kpi('Projected MRR',money(mrr),'flat, lane-based','g')}</div>
+    <div class="card"><div class="card-hd"><h3>Compute agencies</h3><span class="meta">click a row to drill in</span></div>
+    <table><thead><tr><th>Agency</th><th>Status</th><th>Lanes</th><th>Requests</th><th>Tokens</th><th>Plan</th></tr></thead><tbody>${rows||'<tr><td colspan=6 class="muted" style="padding:20px">No agencies on compute yet.</td></tr>'}</tbody></table></div>`;
+}
+
+/* ---------- FRC: AGENCY ---------- */
+async function agencyViewFRC(agencyId, fromAdmin){
+  window.__onLocationView=false;
+  shell(`<div class="center">Loading agency…</div>`);
+  const [{data:aRow},{data:locs}] = await Promise.all([
+    sb.from('agency_month_frc').select('*').eq('agency_id',agencyId).maybeSingle(),
+    sb.from('location_month_frc').select('*').eq('agency_id',agencyId).order('name')
+  ]);
+  if(!aRow){ $('view').innerHTML=`<div class="center">No compute data for this agency.</div>`; return; }
+  const locList = locs||[];
+  const ids = locList.map(l=>l.location_id);
+  let tierRows=[];
+  if(ids.length){ const {data} = await sb.from('frc_usage_daily').select('tier,requests,tokens_in,tokens_out').in('location_id',ids).gte('usage_date',monthStartUTC()); tierRows=data||[]; }
+  const T=tierAgg(tierRows);
+  const reqM=Number(aRow.requests_month||0), tokM=Number(aRow.tokens_in_month||0)+Number(aRow.tokens_out_month||0);
+  const lanes=aRow.lanes, price=aRow.monthly_price;
+  const rows=locList.map(l=>`<tr class="click" onclick="__go('location','${l.location_id}')">
+    <td class="name">${esc(l.name)}</td><td class="muted">${esc(l.vertical||'')}</td>
+    <td class="mono">${fmt(l.requests)}</td><td class="mono">${fmtTok(l.tokens_in)}</td><td class="mono">${fmtTok(l.tokens_out)}</td></tr>`).join('');
+  $('view').innerHTML=`
+    ${fromAdmin?`<span class="back" onclick="__back()">← All compute agencies</span>`:''}
+    <div class="viewhead"><div><div class="crumbs">${fromAdmin?'Compute / ':''}${esc(aRow.name)}</div><h1>${esc(aRow.name)}</h1><div class="sub">${locList.length} locations · ${aRow.enabled===false?'paused':'active'}${aRow.plan_tier?' · '+esc(aRow.plan_tier):''}</div></div><span class="pill">${fromAdmin?'ADMIN VIEW':'AGENCY ADMIN'}</span></div>
+    <div class="card"><div class="card-hd"><h3>Your plan</h3><span class="meta">flat rate · billed per concurrent lane</span></div>
+    <div class="pool"><div class="pool-top">
+      <div class="big">${lanes!=null?fmt(lanes)+' lane'+(lanes==1?'':'s'):'—'}</div>
+      <div class="small">${price!=null?`<b class="mono" style="color:var(--cyan)">${money(price)}/mo</b>`:'<span class="tag warn">quote pending</span>'}</div></div>
+      <div class="note">Tokens are <b>unmetered</b> inside your lanes — the figures below are throughput, not a bill. Lanes can be added or removed any time with pro-rata adjustment.</div></div></div>
+    <div class="kpis">${kpi('Lanes',lanes!=null?fmt(lanes):'—','concurrent')}${kpi('Requests',fmt(reqM),'this month')}${kpi('Tokens processed',fmtTok(tokM),'in + out · unmetered','g')}${kpi('Monthly',price!=null?money(price):'—','flat rate')}</div>
+    ${tierTable(T)}
+    <div class="card"><div class="card-hd"><h3>Locations</h3><span class="meta">click a location</span></div>
+    <table><thead><tr><th>Location</th><th>Vertical</th><th>Requests</th><th>Tokens in</th><th>Tokens out</th></tr></thead><tbody>${rows||'<tr><td colspan=5 class="muted" style="padding:20px">No locations yet.</td></tr>'}</tbody></table></div>`;
+}
+
+/* ---------- FRC: CLIENT / LOCATION ---------- */
+async function clientViewFRC(locationId, fromDrill){
+  window.__onLocationView=true;
+  shell(`<div class="center">Loading…</div>`);
+  const [{data:lm},{data:tiers}] = await Promise.all([
+    sb.from('location_month_frc').select('*').eq('location_id',locationId).maybeSingle(),
+    sb.from('frc_usage_daily').select('tier,requests,tokens_in,tokens_out').eq('location_id',locationId).gte('usage_date',monthStartUTC())
+  ]);
+  if(!lm){ $('view').innerHTML=`<div class="center">No compute data for this location.</div>`; return; }
+  const T=tierAgg(tiers);
+  const tok=Number(lm.tokens_in)+Number(lm.tokens_out);
+  const avg=lm.requests>0?Math.round(tok/lm.requests):0;
+  $('view').innerHTML=`
+  ${fromDrill?`<span class="back" onclick="__back()">← Back</span>`:''}
+  <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} · compute throughput</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
+  <div class="kpis">${kpi('Requests',fmt(lm.requests),'this month')}${kpi('Tokens in',fmtTok(lm.tokens_in),'this month')}${kpi('Tokens out',fmtTok(lm.tokens_out),'this month')}${kpi('Avg tokens/req',fmt(avg),'in + out')}</div>
+  ${tierTable(T)}
+  <div class="card"><div class="card-hd"><h3>How you're billed</h3></div><div style="padding:16px 20px"><div class="note" style="margin:0">Your plan is billed by <b>concurrent lane</b>, not by tokens or requests. Everything above is throughput on your bare-metal lanes — run as much through them as you like; these numbers never change your bill.</div></div></div>`;
+}
 
 boot();
 </script>
