@@ -87,6 +87,18 @@ const SUPABASE_URL = 'https://ughcoidratfajzujpykp.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_8a29mWTXeWUneRQL_EEc8w_uskN3iyx';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+/* ===== GHL AGENCY EMBED =====
+   /agency-embed is the GoHighLevel Custom Page. It is the ONLY framable route.
+   Hard rule (fresh-handshake gate): in embed mode we NEVER render from a
+   persisted Supabase session. The dashboard is painted only after a fresh GHL
+   SSO handshake succeeds on THIS load, so a hostile page that iframes this
+   route can't ride a still-valid session — its parent can't answer
+   REQUEST_USER_DATA with a payload our edge function will decrypt. */
+const SSO_FN = SUPABASE_URL + '/functions/v1/ghl-sso-link';
+const EMBED = location.pathname.replace(/\/+$/,'') === '/agency-embed';
+let EMBED_VERIFIED = false;      // true only after a fresh SSO handshake this load
+let EMBED_ON_SIGNIN = null;      // one-shot: fired when the admin signs in during needs_link
+
 const TIER = { starter:{pool:2500,price:297,ovg:.07}, growth:{pool:6000,price:497,ovg:.07}, scale:{pool:12000,price:997,ovg:.05} };
 const $ = s => document.getElementById(s);
 const root = $('root');
@@ -176,6 +188,10 @@ function loginScreen(mode='signin'){
 function showMsg(t,cls){const m=$('m');if(m){m.className='msg '+cls;m.textContent=t;}}
 
 async function boot(){
+  // Gate: in embed mode nothing renders until a fresh SSO handshake has run
+  // this load. Any stray boot() (e.g. from a persisted session) is redirected
+  // back into the handshake instead of painting the dashboard.
+  if(EMBED && !EMBED_VERIFIED) return agencyEmbedFlow();
   const {data:{session}} = await sb.auth.getSession();
   if(!session) return loginScreen('signin');
   const {data:prof,error} = await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
@@ -185,7 +201,92 @@ async function boot(){
   await loadProducts();
   render();
 }
-sb.auth.onAuthStateChange((_e,s)=>{ if(s) boot(); else loginScreen('signin'); });
+sb.auth.onAuthStateChange((_e,s)=>{
+  if(EMBED){
+    // Embed mode drives its own rendering from agencyEmbedFlow(). Auth-state
+    // changes must never auto-boot here (that would re-open the persisted-session
+    // clickjacking hole). The only thing we react to is the admin completing
+    // sign-in during the needs_link step, via a one-shot callback.
+    if(s && EMBED_ON_SIGNIN){ const cb=EMBED_ON_SIGNIN; EMBED_ON_SIGNIN=null; cb(s); }
+    return;
+  }
+  if(s) boot(); else loginScreen('signin');
+});
+
+/* ---------- GHL EMBED FLOW ---------- */
+function embedShell(inner){
+  root.innerHTML=`<div class="login"><div class="login-hd"><div class="logo" style="justify-content:center">${LOGO} ${BRAND.name}</div></div><div class="login-bd">${inner}</div></div>`;
+}
+function embedStatus(t){ embedShell(`<div class="center" style="padding:8px 0">${esc(t)}</div>`); }
+function embedError(t){ embedShell(`<div class="msg err">${esc(t)}</div><div class="meta" style="margin-top:10px">Try reopening this page from inside GoHighLevel. If it keeps happening, contact FlatRateVoice support.</div>`); }
+function embedMsgFor(v){ const b=v.body||{}; if(b.error) return b.error; if(v.status===401) return 'We could not verify your GoHighLevel session.'; return 'Something went wrong ('+v.status+').'; }
+
+// Copy of GHL's confirmed Custom Page handshake (REQUEST_USER_DATA →
+// REQUEST_USER_DATA_RESPONSE). We don't origin-check the reply: white-label
+// agencies frame this under their own domains, so the trust boundary is the
+// encrypted payload the edge function decrypts, not the frame origin.
+function requestGhlSso(timeoutMs=8000){
+  return new Promise((resolve,reject)=>{
+    let done=false;
+    const onMsg=({data})=>{
+      if(data && data.message==='REQUEST_USER_DATA_RESPONSE'){
+        done=true; window.removeEventListener('message',onMsg); resolve(data.payload);
+      }
+    };
+    window.addEventListener('message',onMsg);
+    window.parent.postMessage({message:'REQUEST_USER_DATA'},'*');
+    setTimeout(()=>{ if(!done){ window.removeEventListener('message',onMsg); reject(new Error('No SSO response from the GoHighLevel window.')); } },timeoutMs);
+  });
+}
+async function postSso(payload){
+  const res=await fetch(SSO_FN,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY},
+    body:JSON.stringify(payload)
+  });
+  let body=null; try{ body=await res.json(); }catch{}
+  return {ok:res.ok,status:res.status,body:body||{}};
+}
+async function agencyEmbedFlow(){
+  embedStatus('Verifying your GoHighLevel session…');
+  try{
+    const encryptedData=await requestGhlSso();
+    const v=await postSso({action:'verify',encryptedData});
+    if(v.status===200 && v.body.linked===true){
+      const {error}=await sb.auth.verifyOtp({token_hash:v.body.session_token_hash,type:'magiclink'});
+      if(error) return embedError('Could not establish your session. '+error.message);
+      EMBED_VERIFIED=true;
+      return boot();
+    }
+    if(v.status===200 && v.body.needs_link===true){
+      return embedNeedsLink();
+    }
+    return embedError(embedMsgFor(v));
+  }catch(e){ return embedError(e.message||'SSO handshake failed.'); }
+}
+async function embedNeedsLink(){
+  // Agency not linked yet. If the admin already has a session (e.g. they just
+  // returned from a magic-link email), link straight away; otherwise show the
+  // EXISTING login flow and link once they sign in.
+  const {data:{session}}=await sb.auth.getSession();
+  if(session) return embedLinkWith(session);
+  loginScreen('signin');
+  showMsg('First-time setup: sign in as your FlatRateVoice agency admin to connect this GoHighLevel account.','ok');
+  EMBED_ON_SIGNIN=(s)=>embedLinkWith(s);
+}
+async function embedLinkWith(session){
+  try{
+    embedStatus('Connecting your agency…');
+    // Re-request a FRESH payload — the one from first load may have aged out
+    // while the admin was signing in; SSO payloads are time-bound.
+    const encryptedData=await requestGhlSso();
+    const l=await postSso({action:'link',encryptedData,supabase_access_token:session.access_token});
+    if(l.status===200 && l.body.linked===true){ EMBED_VERIFIED=true; return boot(); }
+    return embedError(embedMsgFor(l));
+  }catch(e){ return embedError(e.message||'Linking failed.'); }
+}
+
+if(EMBED) agencyEmbedFlow();
 
 /* ---------- SHELL ---------- */
 function shell(inner){
