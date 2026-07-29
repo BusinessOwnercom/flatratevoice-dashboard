@@ -271,16 +271,56 @@ async function embedNeedsLink(){
   const {data:{session}}=await sb.auth.getSession();
   if(session) return embedLinkWith(session);
   loginScreen('signin');
-  showMsg('First-time setup: sign in as your FlatRateVoice agency admin to connect this GoHighLevel account.','ok');
+  showMsg('First-time setup: sign in as your FlatRateVoice agency admin or super admin to connect this GoHighLevel account.','ok');
   EMBED_ON_SIGNIN=(s)=>embedLinkWith(s);
 }
 async function embedLinkWith(session){
+  // Resolve how the target agency gets chosen, by the caller's role:
+  //  - agency_admin: the edge fn infers their OWN agency; we send no agency_id
+  //    (unchanged from before super_admin support existed).
+  //  - super_admin: has no agency of their own, so they pick one and we pass
+  //    agency_id explicitly; the edge fn rejects a super_admin link without it.
+  let prof;
+  try{
+    const {data,error}=await sb.from('profiles').select('role,agency_id').eq('id',session.user.id).maybeSingle();
+    if(error) throw error;
+    prof=data;
+  }catch(e){ return embedError('Could not load your profile: '+(e.message||e)); }
+  if(!prof) return embedError('Your account has no profile yet. Ask an admin to set your role, then reopen this page.');
+  if(prof.role==='agency_admin' && prof.agency_id) return embedDoLink(session,null);
+  if(prof.role==='super_admin') return embedAgencyPicker(session);
+  return embedError('Only an agency admin or super admin can connect a GoHighLevel account.');
+}
+async function embedAgencyPicker(session){
+  embedStatus('Loading agencies…');
+  let ags;
+  try{
+    // Only agencies not yet linked to a GHL company. In this needs_link flow
+    // the current company is guaranteed unlinked, so IS NULL is exactly the set
+    // the edge fn will accept — an already-linked agency would just 409.
+    const {data,error}=await sb.from('agencies').select('id,name').is('ghl_company_id',null).order('name');
+    if(error) throw error;
+    ags=data||[];
+  }catch(e){ return embedError('Could not load agencies: '+(e.message||e)); }
+  if(!ags.length) return embedError('There are no unlinked agencies to connect this GoHighLevel account to. Create an agency (or unlink one) first, then reopen this page.');
+  embedShell(`
+    <div class="fld"><label>Connect this GoHighLevel account to which agency?</label>
+      <select id="agyPick" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+        ${ags.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}
+      </select></div>
+    <button class="btn" style="width:100%;padding:12px" id="agyGo">Connect agency</button>
+    <div class="msg" id="m" style="margin-top:10px"></div>`);
+  $('agyGo').onclick=()=>{ const id=$('agyPick').value; if(id) embedDoLink(session,id); };
+}
+async function embedDoLink(session,agencyId){
   try{
     embedStatus('Connecting your agency…');
     // Re-request a FRESH payload — the one from first load may have aged out
-    // while the admin was signing in; SSO payloads are time-bound.
+    // while the admin was signing in / picking; SSO payloads are time-bound.
     const encryptedData=await requestGhlSso();
-    const l=await postSso({action:'link',encryptedData,supabase_access_token:session.access_token});
+    const req={action:'link',encryptedData,supabase_access_token:session.access_token};
+    if(agencyId) req.agency_id=agencyId; // super_admin only; omitted for agency_admin
+    const l=await postSso(req);
     if(l.status===200 && l.body.linked===true){ EMBED_VERIFIED=true; return boot(); }
     return embedError(embedMsgFor(l));
   }catch(e){ return embedError(e.message||'Linking failed.'); }
