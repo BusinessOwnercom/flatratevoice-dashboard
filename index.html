@@ -97,7 +97,6 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const SSO_FN = SUPABASE_URL + '/functions/v1/ghl-sso-link';
 const EMBED = location.pathname.replace(/\/+$/,'') === '/agency-embed';
 let EMBED_VERIFIED = false;      // true only after a fresh SSO handshake this load
-let EMBED_ON_SIGNIN = null;      // one-shot: fired when the admin signs in during needs_link
 
 const TIER = { starter:{pool:2500,price:297,ovg:.07}, growth:{pool:6000,price:497,ovg:.07}, scale:{pool:12000,price:997,ovg:.05} };
 const $ = s => document.getElementById(s);
@@ -202,14 +201,11 @@ async function boot(){
   render();
 }
 sb.auth.onAuthStateChange((_e,s)=>{
-  if(EMBED){
-    // Embed mode drives its own rendering from agencyEmbedFlow(). Auth-state
-    // changes must never auto-boot here (that would re-open the persisted-session
-    // clickjacking hole). The only thing we react to is the admin completing
-    // sign-in during the needs_link step, via a one-shot callback.
-    if(s && EMBED_ON_SIGNIN){ const cb=EMBED_ON_SIGNIN; EMBED_ON_SIGNIN=null; cb(s); }
-    return;
-  }
+  // Embed mode renders solely from agencyEmbedFlow() after a fresh SSO handshake.
+  // Auth-state changes must never auto-boot here (that would re-open the
+  // persisted-session clickjacking hole). There is no in-iframe sign-in anymore
+  // — linking happens in the normal dashboard via a one-time code.
+  if(EMBED) return;
   if(s) boot(); else loginScreen('signin');
 });
 
@@ -259,71 +255,40 @@ async function agencyEmbedFlow(){
       return boot();
     }
     if(v.status===200 && v.body.needs_link===true){
-      return embedNeedsLink();
+      return embedIssueCode(encryptedData);
     }
     return embedError(embedMsgFor(v));
   }catch(e){ return embedError(e.message||'SSO handshake failed.'); }
 }
-async function embedNeedsLink(){
-  // Agency not linked yet. If the admin already has a session (e.g. they just
-  // returned from a magic-link email), link straight away; otherwise show the
-  // EXISTING login flow and link once they sign in.
-  const {data:{session}}=await sb.auth.getSession();
-  if(session) return embedLinkWith(session);
-  loginScreen('signin');
-  showMsg('First-time setup: sign in as your FlatRateVoice agency admin or super admin to connect this GoHighLevel account.','ok');
-  EMBED_ON_SIGNIN=(s)=>embedLinkWith(s);
-}
-async function embedLinkWith(session){
-  // Resolve how the target agency gets chosen, by the caller's role:
-  //  - agency_admin: the edge fn infers their OWN agency; we send no agency_id
-  //    (unchanged from before super_admin support existed).
-  //  - super_admin: has no agency of their own, so they pick one and we pass
-  //    agency_id explicitly; the edge fn rejects a super_admin link without it.
-  let prof;
-  try{
-    const {data,error}=await sb.from('profiles').select('role,agency_id').eq('id',session.user.id).maybeSingle();
-    if(error) throw error;
-    prof=data;
-  }catch(e){ return embedError('Could not load your profile: '+(e.message||e)); }
-  if(!prof) return embedError('Your account has no profile yet. Ask an admin to set your role, then reopen this page.');
-  if(prof.role==='agency_admin' && prof.agency_id) return embedDoLink(session,null);
-  if(prof.role==='super_admin') return embedAgencyPicker(session);
-  return embedError('Only an agency admin or super admin can connect a GoHighLevel account.');
-}
-async function embedAgencyPicker(session){
-  embedStatus('Loading agencies…');
-  let ags;
-  try{
-    // Only agencies not yet linked to a GHL company. In this needs_link flow
-    // the current company is guaranteed unlinked, so IS NULL is exactly the set
-    // the edge fn will accept — an already-linked agency would just 409.
-    const {data,error}=await sb.from('agencies').select('id,name').is('ghl_company_id',null).order('name');
-    if(error) throw error;
-    ags=data||[];
-  }catch(e){ return embedError('Could not load agencies: '+(e.message||e)); }
-  if(!ags.length) return embedError('There are no unlinked agencies to connect this GoHighLevel account to. Create an agency (or unlink one) first, then reopen this page.');
+// Agency not linked yet. We do NOT sign anyone in inside the iframe — a
+// magic-link email opens a fresh top-level tab, never back into this frame, and
+// in-iframe Supabase storage is increasingly partitioned by browsers. Instead
+// the edge fn mints a one-time code (bound server-side to this GHL company);
+// the admin enters it in the normal, fully-authenticated dashboard.
+async function embedIssueCode(encryptedData){
+  embedStatus('Preparing a connection code…');
+  const r=await postSso({action:'issue_link_code',encryptedData});
+  if(r.status===200 && r.body.already_linked===true){
+    return embedShell(`<div class="center" style="padding:8px 0">This GoHighLevel account is now connected.</div>
+      <button class="btn" style="width:100%;padding:12px;margin-top:12px" id="reload">Reload</button>`),
+      ($('reload').onclick=()=>location.reload());
+  }
+  if(r.status!==200 || !r.body.code){ return embedError(embedMsgFor(r)); }
+  const code=r.body.code, pretty=code.length===8?code.slice(0,4)+'-'+code.slice(4):code;
   embedShell(`
-    <div class="fld"><label>Connect this GoHighLevel account to which agency?</label>
-      <select id="agyPick" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
-        ${ags.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}
-      </select></div>
-    <button class="btn" style="width:100%;padding:12px" id="agyGo">Connect agency</button>
-    <div class="msg" id="m" style="margin-top:10px"></div>`);
-  $('agyGo').onclick=()=>{ const id=$('agyPick').value; if(id) embedDoLink(session,id); };
-}
-async function embedDoLink(session,agencyId){
-  try{
-    embedStatus('Connecting your agency…');
-    // Re-request a FRESH payload — the one from first load may have aged out
-    // while the admin was signing in / picking; SSO payloads are time-bound.
-    const encryptedData=await requestGhlSso();
-    const req={action:'link',encryptedData,supabase_access_token:session.access_token};
-    if(agencyId) req.agency_id=agencyId; // super_admin only; omitted for agency_admin
-    const l=await postSso(req);
-    if(l.status===200 && l.body.linked===true){ EMBED_VERIFIED=true; return boot(); }
-    return embedError(embedMsgFor(l));
-  }catch(e){ return embedError(e.message||'Linking failed.'); }
+    <div style="text-align:left">
+      <h2 style="margin:0 0 8px">Connect your GoHighLevel account</h2>
+      <p class="meta">One-time setup to link this GoHighLevel account to your FlatRateVoice agency:</p>
+      <ol class="meta" style="margin:12px 0 12px 18px;line-height:1.7">
+        <li>Open <b>app.flatratevoice.com</b> in a new tab and sign in.</li>
+        <li>Go to your agency &rarr; <b>Connect GoHighLevel</b>.</li>
+        <li>Enter this code:</li>
+      </ol>
+      <div style="font-family:var(--dsp,ui-monospace,monospace);font-size:26px;letter-spacing:4px;text-align:center;padding:14px;border:1px dashed var(--borderlit,var(--border));border-radius:8px;background:var(--s1)">${esc(pretty)}</div>
+      <p class="meta" style="margin-top:10px">Expires in about 15 minutes · usable once.</p>
+      <button class="btn" style="width:100%;padding:12px;margin-top:12px" id="reload">I've connected it — reload</button>
+    </div>`);
+  $('reload').onclick=()=>location.reload();
 }
 
 if(EMBED) agencyEmbedFlow();
@@ -427,7 +392,7 @@ async function agencyView(agencyId,fromAdmin){
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
     sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
-    sb.from('agencies').select('ghl_webhook_url').eq('id',agencyId).maybeSingle()
+    sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle()
   ]);
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
@@ -444,6 +409,12 @@ async function agencyView(agencyId,fromAdmin){
     <div style="padding:16px 20px"><label class="meta">Inbound Webhook URL</label><br>
       <div style="display:flex;gap:10px;margin-top:6px"><input id="ghlWebhookInput" value="${esc((ghlRow&&ghlRow.ghl_webhook_url)||'')}" placeholder="https://services.leadconnectorhq.com/hooks/..." style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"><button class="btn" onclick="__saveGhlWebhook('${agencyId}')">Save</button></div>
       <div id="ghlWebhookMsg" class="meta" style="margin-top:8px"></div></div></div>
+    <div class="card"><div class="card-hd"><h3>Connect GoHighLevel</h3><span class="meta">link this agency to a GHL account (SSO)</span></div>
+    <div style="padding:16px 20px">${(ghlRow&&ghlRow.ghl_company_id)
+      ? `<div class="meta">✓ Connected to GoHighLevel company <span class="mono">${esc(ghlRow.ghl_company_id)}</span>. Open the FlatRateVoice Custom Page inside GoHighLevel to use it.</div>`
+      : `<div class="meta" style="margin-bottom:8px">In GoHighLevel, open the FlatRateVoice Custom Page — it shows a one-time code. Enter it here to connect this agency.</div>
+      <div style="display:flex;gap:10px;max-width:420px"><input id="ghlCodeInput" placeholder="8-character code" autocomplete="off" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white);text-transform:uppercase;letter-spacing:2px"><button class="btn" onclick="__connectGhl('${agencyId}')">Connect</button></div>
+      <div id="ghlConnectMsg" class="meta" style="margin-top:8px"></div>`}</div></div>
     <div class="card"><div class="card-hd"><h3>GHL Contact Recognition — Agency Default</h3><span class="meta">applies to every location unless a location sets its own override</span></div>
     <div style="padding:16px 20px">
       <div id="agyGhlMsg" class="msg" style="margin-bottom:12px;display:none"></div>
@@ -522,6 +493,28 @@ window.__saveGhlWebhook = async function(agencyId){
   }catch(err){
     msgEl.textContent = "Network error: " + err.message;
   }
+};
+// Redeem the one-time code shown on the GHL Custom Page (/agency-embed). Always
+// passes agency_id = the agency being viewed: for a super_admin that's the
+// drilled-in agency (edge fn requires it); for an agency_admin the edge fn
+// ignores it and infers their own agency anyway.
+window.__connectGhl = async function(agencyId){
+  const el = $('ghlCodeInput'), msg = $('ghlConnectMsg');
+  const code = (el && el.value || '').trim();
+  if(!code){ if(msg) msg.textContent = 'Enter the code shown on the GoHighLevel screen.'; return; }
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ if(msg) msg.textContent = 'Your session expired — refresh and sign in again.'; return; }
+  if(msg) msg.textContent = 'Connecting…';
+  try{
+    const res = await fetch(SSO_FN, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+session.access_token },
+      body: JSON.stringify({ action:'redeem_link_code', code, supabase_access_token:session.access_token, agency_id:agencyId })
+    });
+    let body={}; try{ body=await res.json(); }catch{}
+    if(res.status===200 && body.linked){ if(msg) msg.textContent = '✓ Connected! GoHighLevel is now linked to this agency.'; setTimeout(()=>render(),1200); return; }
+    if(msg) msg.textContent = body.error || ('Could not connect ('+res.status+').');
+  }catch(err){ if(msg) msg.textContent = 'Network error: '+err.message; }
 };
 
 window.__submitAddLoc = async function(e, agencyId, fromAdmin){
