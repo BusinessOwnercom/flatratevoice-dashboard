@@ -308,7 +308,7 @@ function shell(inner){
   // history), not live monitoring. A background re-render there yanks whatever
   // you're mid-way through reading off the screen. Use the header refresh button
   // instead; the overview and agency views still auto-refresh normally.
-  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView && !window.__agyGhlEditing) render(); }, 300000); }
+  if(PROFILE && !document.hidden && !editing && !window.__fwdInstructionsOpen && !window.__onLocationView && !window.__agyGhlEditing && !window.__brandEditing) render(); }, 300000); }
 }
 
 function poolCalc(row){
@@ -387,12 +387,18 @@ async function adminHome(){
 async function agencyView(agencyId,fromAdmin){
   window.__onLocationView = false;
   window.__agyGhlEditing = false;
+  window.__brandEditing = false;
   shell(`<div class="center">Loading agency…</div>`);
-  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow}] = await Promise.all([
+  // Branding lives in the API's own Postgres, not in Supabase: the widget
+  // resolves it on the hot path, so that's where the source of truth is. It's
+  // read back through the API rather than mirrored, and a failure here just
+  // renders an empty card instead of taking down the whole agency view.
+  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow},brand] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
     sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
-    sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle()
+    sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle(),
+    __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({}))
   ]);
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
@@ -435,6 +441,29 @@ async function agencyView(agencyId,fromAdmin){
         <button class="btn ghost" onclick="__clearAgencyGhlContacts('${agencyId}')">Clear</button>
       </div>
       <div class="meta" style="margin-top:10px">The PIT is write-only: it's validated against GHL on save and never returned to this dashboard, so this field always starts blank. Enter the PIT and Sub-Account ID together — greeting mode can be changed on its own. "Clear" unsets all three agency-wide.</div>
+    </div></div>
+    <div class="card"><div class="card-hd"><h3>Widget Branding</h3><span class="meta">what website visitors see when they open the chat widget</span></div>
+    <div style="padding:16px 20px">
+      <div id="brandMsg" class="msg" style="margin-bottom:12px;display:none"></div>
+      <div style="display:grid;gap:12px;max-width:540px">
+        <div><label class="meta">Brand name</label><br>
+          <input id="brandName" type="text" autocomplete="off" maxlength="60" oninput="window.__brandEditing=true" value="${esc((brand&&brand.brand_name)||'')}" placeholder="Leave blank to use the default" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+        <div><label class="meta">Logo URL</label><br>
+          <input id="brandLogo" type="text" autocomplete="off" oninput="window.__brandEditing=true" value="${esc((brand&&brand.logo_url)||'')}" placeholder="https://yourcdn.com/logo.png" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+        <div><label class="meta">Primary color</label><br>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
+            <input id="brandColor" type="text" autocomplete="off" oninput="window.__brandEditing=true;__brandSyncSwatch()" value="${esc((brand&&brand.primary_color)||'')}" placeholder="#00D4FF" style="width:130px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)">
+            <span id="brandSwatch" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:${esc((brand&&brand.primary_color)||'transparent')}"></span>
+          </div></div>
+        <div><label class="meta">Custom widget domain <span class="muted">(optional)</span></label><br>
+          <input id="brandDomain" type="text" autocomplete="off" oninput="window.__brandEditing=true" value="${esc((brand&&brand.widget_domain)||'')}" placeholder="chat.youragency.com" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn" id="brandSaveBtn" onclick="__saveBranding('${agencyId}')">Save branding</button>
+        <button class="btn ghost" onclick="__clearBranding('${agencyId}')">Clear</button>
+      </div>
+      <div class="meta" style="margin-top:10px">Any field left blank falls back to the default. The brand name is what the agent tells a visitor who asks what platform it runs on, so setting it keeps the answer on your brand. The logo must be an <span class="mono">https://</span> URL you host.</div>
+      <div class="meta" style="margin-top:10px">A custom domain is <b>not live yet</b> — the DNS side is still being set up, so leave it blank for now. Once it's ready you'll point <span class="mono">chat.youragency.com</span> at us with a CNAME and the embed snippet will serve from your domain instead of <span class="mono">${esc((brand&&brand.default_widget_host)||'the default host')}</span>. Saving it early changes the snippet before the domain resolves, which breaks the widget.</div>
     </div></div>
     <div class="kpis">${kpi('Minutes used',fmt(p.used),'of '+fmt(p.t.pool)+' pooled',p.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi('Projected bill',money(p.bill),p.over>0?'incl. '+fmt(p.over)+' min overage':'within pool',p.over>0?'r':'g')}</div>
     <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base · overage $${p.t.ovg.toFixed(2)}/min</span></div>
@@ -624,14 +653,22 @@ async function clientView(locationId,fromDrill){
   const [{data:lm},{data:calls},{data:widgetRow}] = await Promise.all([
     sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
     sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10),
-    sb.from('locations').select('embed_token,widget_enabled,ghl_location_id').eq('id',locationId).maybeSingle()
+    sb.from('locations').select('embed_token,widget_enabled,ghl_location_id,agency_id').eq('id',locationId).maybeSingle()
     ]);
   if(!lm){$('view').innerHTML=`<div class="center">No data for this location.</div>`;return;}
   const rate=lm.calls>0?Math.round(lm.booked/lm.calls*100):0;
   const wEnabled = widgetRow && widgetRow.widget_enabled;
   const wToken = widgetRow && widgetRow.embed_token;
   const wGhlId = widgetRow ? widgetRow.ghl_location_id : '';
-  const wSnippet = wToken ? `<script src="https://api.flatratevoice.com/widget.js" data-token="${wToken}"><\/script>` : '';
+  // The snippet is what gets pasted into the end client's website, so it must
+  // carry the agency's own widget domain when they have one — otherwise a
+  // white-labeled agency hands their client a platform hostname to paste in.
+  let wHost = 'api.flatratevoice.com';
+  if(wToken && widgetRow.agency_id){
+    const wBrand = await __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(widgetRow.agency_id)).catch(()=>({}));
+    wHost = (wBrand && (wBrand.widget_domain || wBrand.default_widget_host)) || wHost;
+  }
+  const wSnippet = wToken ? `<script src="https://${wHost}/widget.js" data-token="${wToken}"><\/script>` : '';
   $('view').innerHTML=`
   ${fromDrill?`<span class="back" onclick="__back()">← Back</span>`:''}
   <div class="viewhead"><div><div class="crumbs">${esc(lm.name)}</div><h1>${esc(lm.name)}</h1><div class="sub">${esc(lm.vertical||'')} · AI receptionist active</div></div><span class="pill">${fromDrill?'DRILL-DOWN':'CLIENT'}</span></div>
@@ -764,6 +801,15 @@ async function __ghlPost(url, body){
   try{ result = await resp.json(); }catch(e){ /* non-JSON / empty body */ }
   return {resp, result};
 }
+// Authenticated GET against the API. Used for state that lives in the API's own
+// Postgres rather than in Supabase, so it can't be read with sb.from(...).
+async function __apiGet(url){
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session) return {};
+  const resp = await fetch(url, {headers:{"Authorization":"Bearer "+session.access_token}});
+  if(!resp.ok) return {};
+  try{ return await resp.json(); }catch(e){ return {}; }
+}
 // Build a credentials payload from a pit/cid/mode tri.  Returns {error} when the
 // pair is half-filled, or {body} ready to POST.  pit + contacts_location_id must
 // travel together; greeting_mode alone is allowed (no credential change).
@@ -818,6 +864,52 @@ window.__clearAgencyGhlContacts = async function(agencyId){
     $('agyGhlPit').value=''; $('agyGhlCid').value=''; $('agyGhlMode').value='off';
     window.__agyGhlEditing = false;
   }catch(err){ __ghlMsg('agyGhlMsg', 'Network error: '+esc(err.message), 'err'); }
+};
+
+/* --- Widget branding --- */
+window.__brandSyncSwatch = function(){
+  const v = ($('brandColor').value || '').trim();
+  const sw = $('brandSwatch'); if(!sw) return;
+  sw.style.background = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : 'transparent';
+};
+// Every field is sent on save, including the blank ones: the API treats "" as
+// "unset this field", so clearing one box and saving actually clears it rather
+// than silently leaving the old value live on the widget.
+window.__saveBranding = async function(agencyId){
+  const btn = $('brandSaveBtn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  __ghlMsg('brandMsg', 'Saving…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/branding', {
+      agency_id: agencyId,
+      brand_name: $('brandName').value.trim(),
+      logo_url: $('brandLogo').value.trim(),
+      primary_color: $('brandColor').value.trim(),
+      widget_domain: $('brandDomain').value.trim()
+    });
+    if(!resp.ok || result.ok===false || result.error){
+      __ghlMsg('brandMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err');
+      if(btn){ btn.disabled=false; btn.textContent='Save branding'; }
+      return;
+    }
+    __ghlMsg('brandMsg', 'Saved. New widget sessions pick this up immediately; open widgets keep their current look until reloaded.', 'ok');
+    window.__brandEditing = false;
+    if(btn){ btn.disabled=false; btn.textContent='Save branding'; }
+  }catch(err){
+    __ghlMsg('brandMsg', 'Network error: '+esc(err.message), 'err');
+    if(btn){ btn.disabled=false; btn.textContent='Save branding'; }
+  }
+};
+window.__clearBranding = async function(agencyId){
+  if(!confirm('Clear all widget branding (name, logo, color, and custom domain) for this agency?')) return;
+  __ghlMsg('brandMsg', 'Clearing…', '');
+  try{
+    const {resp, result} = await __ghlPost('https://api.flatratevoice.com/api/agency/branding', {clear:true, agency_id: agencyId});
+    if(!resp.ok || result.ok===false || result.error){ __ghlMsg('brandMsg', 'Error: '+esc(result.error || result.message || ('HTTP '+resp.status)), 'err'); return; }
+    __ghlMsg('brandMsg', 'Cleared. The widget shows the default branding.', 'ok');
+    $('brandName').value=''; $('brandLogo').value=''; $('brandColor').value=''; $('brandDomain').value='';
+    window.__brandSyncSwatch();
+    window.__brandEditing = false;
+  }catch(err){ __ghlMsg('brandMsg', 'Network error: '+esc(err.message), 'err'); }
 };
 
 /* --- Per-location override --- */
