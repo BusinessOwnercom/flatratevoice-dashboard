@@ -362,14 +362,25 @@ function __buildBill(p, b){
         + (b.invoice_error?` Invoice preview failed: ${esc(b.invoice_error)}.`:'')
     };
   }
+  // On the estimate. Distinguish an EXPECTED estimate (Stripe says this agency
+  // isn't on metered billing -- b.ok with a reason) from a FAILURE to reach
+  // live billing (empty {}, {__billErr} from a rejected fetch, or an {ok:false}
+  // error response). The two looked identical during the apikey-preflight
+  // regression, which is why it went unnoticed -- so make the failure loud in
+  // the console and visible on the card.
+  const reached = !!(b && b.ok);
+  const errored = !reached;
+  const detail = b && (b.__billErr || b.error);
+  if(errored) console.warn('[billing] calendar-month estimate shown; live billing not loaded:', detail||'(empty response)', b);
   return {
-    live:false, used:p.used, pool:p.t.pool, over:p.over, pct:p.pct,
+    live:false, loadError:errored, used:p.used, pool:p.t.pool, over:p.over, pct:p.pct,
     base:p.t.price, rate:p.t.ovg, totalText:money(p.bill),
     periodLabel:'calendar month',
     usedSub:'of '+mins(p.t.pool)+' pooled · calendar month',
     billSub:p.over>0?'estimate · incl. '+mins(p.over)+' min overage':'estimate · within pool',
-    footnote:'<b>Estimate only</b> — not on metered billing'
-      + (b&&b.reason?` (${esc(b.reason)})`:'')
+    footnote:'<b>Estimate only</b> — '+(errored?'couldn’t load live billing':'not on metered billing')
+      + (!errored&&b&&b.reason?` (${esc(b.reason)})`:'')
+      + (errored&&detail?` (${esc(detail)})`:'')
       + ', so nothing here is charged automatically. Figures are calendar-month, not a Stripe billing period.'
   };
 }
@@ -456,7 +467,12 @@ async function agencyView(agencyId,fromAdmin){
     sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
     sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle(),
     __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({})),
-    __apiGet(BILLING_FN+'?agency_id='+encodeURIComponent(agencyId), {apikey:SUPABASE_KEY}).catch(()=>({}))
+    // A network/CORS failure rejects this fetch (e.g. the apikey-preflight
+    // regression). Without a signal the card silently swaps live billing for
+    // the estimate with no trace -- log it and tag the payload so __buildBill
+    // can tell "reach failed" apart from "legitimately not on metered billing".
+    __apiGet(BILLING_FN+'?agency_id='+encodeURIComponent(agencyId), {apikey:SUPABASE_KEY})
+      .catch(e=>{ console.error('[billing] live figures unavailable (fetch failed — network/CORS):', e); return {__billErr:String((e&&e.message)||e||'fetch failed')}; })
   ]);
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
@@ -525,7 +541,7 @@ async function agencyView(agencyId,fromAdmin){
       <div class="meta" style="margin-top:10px">A custom domain is <b>not live yet</b> — the DNS side is still being set up, so leave it blank for now. Once it's ready you'll point <span class="mono">chat.youragency.com</span> at us with a CNAME and the embed snippet will serve from your domain instead of <span class="mono">${esc((brand&&brand.default_widget_host)||'the default host')}</span>. Saving it early changes the snippet before the domain resolves, which breaks the widget.</div>
     </div></div>
     <div class="kpis">${kpi('Minutes used',mins(bill.used),bill.usedSub,bill.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi(bill.live?'Next invoice':'Projected bill',bill.totalText,bill.billSub,bill.over>0?'r':'g')}</div>
-    <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(bill.base)}/mo base · overage $${bill.rate.toFixed(2)}/min · ${esc(bill.periodLabel)}</span></div>
+    <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3>${bill.loadError?`<span class="tag warn" title="The live billing service didn't respond, so this card is showing a calendar-month estimate. See the console for details.">⚠ live billing unavailable</span>`:''}<span class="meta">${money(bill.base)}/mo base · overage $${bill.rate.toFixed(2)}/min · ${esc(bill.periodLabel)}</span></div>
     <div class="pool"><div class="pool-top"><div class="big">${mins(bill.used)} / ${mins(bill.pool)} min</div><div class="small">${bill.over>0?`<span class="tag over">${mins(bill.over)} min over</span>`:mins(Math.max(0,bill.pool-bill.used))+' min left'}</div></div>
       <div class="bar ${bill.over>0?'over':''}"><span style="width:${bill.pct}%"></span></div>
       <div class="pool-legend"><span>${bill.pct}% of pool used</span><span>${bill.live?'Next invoice':'Projected bill'}: <b class="mono" style="color:${bill.over>0?'var(--red)':'var(--cyan)'}">${bill.totalText}</b></span></div></div>
