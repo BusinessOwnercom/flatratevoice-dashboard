@@ -95,6 +95,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
    route can't ride a still-valid session — its parent can't answer
    REQUEST_USER_DATA with a payload our edge function will decrypt. */
 const SSO_FN = SUPABASE_URL + '/functions/v1/ghl-sso-link';
+const BILLING_FN = SUPABASE_URL + '/functions/v1/agency-billing';
 const EMBED = location.pathname.replace(/\/+$/,'') === '/agency-embed';
 let EMBED_VERIFIED = false;      // true only after a fresh SSO handshake this load
 
@@ -316,6 +317,62 @@ function poolCalc(row){
   const pct=Math.min(100,Math.round(used/t.pool*100)), over=Math.max(0,used-t.pool);
   return {t,used,pct,over,bill:t.price+over*t.ovg,status:over>0?'over':pct>=85?'warn':'ok'};
 }
+// Exact dollars. money() rounds to whole dollars, which is fine for an estimate
+// but wrong for a real invoice total -- $304.87 must not render as "$305".
+const money2=n=>'$'+Number(n||0).toFixed(2);
+// Minute figures on the billing card. fmt() rounds to whole numbers, which
+// silently turns a 112.41-minute overage into "112 min" -- the same truncation
+// we refuse to accept from Stripe's invoice `quantity` field. Keep 2 decimals.
+const mins=n=>Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});
+
+// Turn the agency-billing response into what the pool card renders. When Stripe
+// has real figures they win outright; otherwise the old client-side estimate is
+// kept but labelled as an estimate, so a cosmetic number is never mistakable
+// for a charge.
+//
+// NOTE: overage minutes come from b.overage_minutes (derived from the Stripe
+// METER SUMMARY) and overage dollars from b.overage_amount_cents (summed from
+// invoice line `amount`). The invoice line's `quantity` field is deliberately
+// never used anywhere -- Stripe truncates it to an integer, so a 112.41-minute
+// overage would display as 112.
+function __buildBill(p, b){
+  // timeZone:'UTC' -- Stripe period bounds are UTC midnights, and rendering
+  // them in local time shifts every date back a day west of Greenwich.
+  const dt=d=>d?new Date(d).toLocaleDateString(undefined,{month:'short',day:'numeric',timeZone:'UTC'}):'?';
+  if(b && b.ok && b.on_metered_billing){
+    const pool=Number(b.included_minutes||p.t.pool);
+    const used=Number(b.minutes_recorded||0);
+    const over=Number(b.overage_minutes||0);
+    const rate=Number(b.overage_rate_cents||0)/100;
+    const overAmt=Number(b.overage_amount_cents||0)/100;
+    const total=Number(b.upcoming_total_cents||0)/100;
+    // usage_daily is live; the meter only has fully-closed days. Showing the
+    // gap stops "my dashboard says 40 minutes but Stripe says 12" tickets.
+    const lag=Math.max(0, used-Number(b.minutes_metered||0));
+    return {
+      live:true, used, pool, over, pct:Math.min(100,pool?Math.round(used/pool*100):0),
+      base:Number(b.base_amount_cents||0)/100, rate, totalText:money2(total),
+      periodLabel:`billing period ${dt(b.period&&b.period.start)} – ${dt(b.period&&b.period.end)}`,
+      usedSub:'of '+mins(pool)+' pooled · this billing period',
+      billSub:over>0?'incl. '+mins(over)+' min overage ('+money2(overAmt)+')':'within pool',
+      footnote:`Charged automatically by Stripe at the end of this billing period.`
+        + (over>0?` Overage: ${over.toFixed(2)} min × $${rate.toFixed(2)} = ${money2(overAmt)}.`:'')
+        + (lag>0.005?` ${lag.toFixed(2)} min recorded since the last nightly report aren't metered yet.`:'')
+        + (b.meter_error?` Meter read failed: ${esc(b.meter_error)}.`:'')
+        + (b.invoice_error?` Invoice preview failed: ${esc(b.invoice_error)}.`:'')
+    };
+  }
+  return {
+    live:false, used:p.used, pool:p.t.pool, over:p.over, pct:p.pct,
+    base:p.t.price, rate:p.t.ovg, totalText:money(p.bill),
+    periodLabel:'calendar month',
+    usedSub:'of '+mins(p.t.pool)+' pooled · calendar month',
+    billSub:p.over>0?'estimate · incl. '+mins(p.over)+' min overage':'estimate · within pool',
+    footnote:'<b>Estimate only</b> — not on metered billing'
+      + (b&&b.reason?` (${esc(b.reason)})`:'')
+      + ', so nothing here is charged automatically. Figures are calendar-month, not a Stripe billing period.'
+  };
+}
 function kpi(l,v,d,cls){return `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>${d?`<div class="d ${cls||''}">${d}</div>`:''}</div>`}
 
 /* ---------- ROUTER ---------- */
@@ -377,9 +434,9 @@ async function adminHome(){
     <td class="mono">${money(p.bill)}</td></tr>`;}).join('');
   $('view').innerHTML=`
     <div class="viewhead"><div><div class="crumbs">All agencies</div><h1>Platform overview</h1><div class="sub">Every agency, every client location, live usage.</div></div><span class="pill">SUPER ADMIN</span></div>
-    <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',(locs||[]).length,'live')}${kpi('Minutes this month',fmt(totalMin),'all agencies')}${kpi('Projected revenue',money(mrr),overN?overN+' in overage':'all within pool',overN?'a':'g')}</div>
+    <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',(locs||[]).length,'live')}${kpi('Minutes this month',fmt(totalMin),'all agencies')}${kpi('Projected revenue',money(mrr),'estimate · calendar month'+(overN?' · '+overN+' in overage':''),overN?'a':'g')}</div>
     <div class="card"><div class="card-hd"><h3>Agencies</h3><span class="meta">click a row to drill in</span></div>
-    <table><thead><tr><th>Agency</th><th>Plan</th><th>Clients</th><th>Minutes</th><th>Pool</th><th>Status</th><th>Bill</th></tr></thead><tbody>${rows||'<tr><td colspan=7 class="muted" style="padding:20px">No agencies yet.</td></tr>'}</tbody></table></div>
+    <table><thead><tr><th>Agency</th><th>Plan</th><th>Clients</th><th>Minutes</th><th>Pool</th><th>Status</th><th>Est. bill</th></tr></thead><tbody>${rows||'<tr><td colspan=7 class="muted" style="padding:20px">No agencies yet.</td></tr>'}</tbody></table></div>
     ${callsCard(calls,true)}`;
 }
 
@@ -393,15 +450,17 @@ async function agencyView(agencyId,fromAdmin){
   // resolves it on the hot path, so that's where the source of truth is. It's
   // read back through the API rather than mirrored, and a failure here just
   // renders an empty card instead of taking down the whole agency view.
-  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow},brand] = await Promise.all([
+  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow},brand,billing] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
     sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
     sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle(),
-    __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({}))
+    __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({})),
+    __apiGet(BILLING_FN+'?agency_id='+encodeURIComponent(agencyId), {apikey:SUPABASE_KEY}).catch(()=>({}))
   ]);
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
+  const bill=__buildBill(p, billing);
   const calls_m=(locs||[]).reduce((s,l)=>s+Number(l.calls||0),0);
   const booked=(locs||[]).reduce((s,l)=>s+Number(l.booked||0),0);
   const rows=(locs||[]).map(l=>`<tr class="click" onclick="__go('location','${l.location_id}')">
@@ -465,11 +524,12 @@ async function agencyView(agencyId,fromAdmin){
       <div class="meta" style="margin-top:10px">Any field left blank falls back to the default. The brand name is what the agent tells a visitor who asks what platform it runs on, so setting it keeps the answer on your brand. The logo must be an <span class="mono">https://</span> URL you host.</div>
       <div class="meta" style="margin-top:10px">A custom domain is <b>not live yet</b> — the DNS side is still being set up, so leave it blank for now. Once it's ready you'll point <span class="mono">chat.youragency.com</span> at us with a CNAME and the embed snippet will serve from your domain instead of <span class="mono">${esc((brand&&brand.default_widget_host)||'the default host')}</span>. Saving it early changes the snippet before the domain resolves, which breaks the widget.</div>
     </div></div>
-    <div class="kpis">${kpi('Minutes used',fmt(p.used),'of '+fmt(p.t.pool)+' pooled',p.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi('Projected bill',money(p.bill),p.over>0?'incl. '+fmt(p.over)+' min overage':'within pool',p.over>0?'r':'g')}</div>
-    <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(p.t.price)}/mo base · overage $${p.t.ovg.toFixed(2)}/min</span></div>
-    <div class="pool"><div class="pool-top"><div class="big">${fmt(p.used)} / ${fmt(p.t.pool)} min</div><div class="small">${p.over>0?`<span class="tag over">${fmt(p.over)} min over</span>`:fmt(p.t.pool-p.used)+' min left'}</div></div>
-      <div class="bar ${p.over>0?'over':''}"><span style="width:${p.pct}%"></span></div>
-      <div class="pool-legend"><span>${p.pct}% of pool used</span><span>Projected bill: <b class="mono" style="color:${p.over>0?'var(--red)':'var(--cyan)'}">${money(p.bill)}</b></span></div></div></div>
+    <div class="kpis">${kpi('Minutes used',mins(bill.used),bill.usedSub,bill.over>0?'r':'g')}${kpi('Calls answered',fmt(calls_m),'this month')}${kpi('Appointments booked',fmt(booked),(calls_m>0?Math.round(booked/calls_m*100):0)+'% of calls','g')}${kpi(bill.live?'Next invoice':'Projected bill',bill.totalText,bill.billSub,bill.over>0?'r':'g')}</div>
+    <div class="card"><div class="card-hd"><h3>Pooled minutes — ${a.plan} plan</h3><span class="meta">${money(bill.base)}/mo base · overage $${bill.rate.toFixed(2)}/min · ${esc(bill.periodLabel)}</span></div>
+    <div class="pool"><div class="pool-top"><div class="big">${mins(bill.used)} / ${mins(bill.pool)} min</div><div class="small">${bill.over>0?`<span class="tag over">${mins(bill.over)} min over</span>`:mins(Math.max(0,bill.pool-bill.used))+' min left'}</div></div>
+      <div class="bar ${bill.over>0?'over':''}"><span style="width:${bill.pct}%"></span></div>
+      <div class="pool-legend"><span>${bill.pct}% of pool used</span><span>${bill.live?'Next invoice':'Projected bill'}: <b class="mono" style="color:${bill.over>0?'var(--red)':'var(--cyan)'}">${bill.totalText}</b></span></div></div>
+      <div class="meta" style="padding:0 20px 16px">${bill.footnote}</div></div>
     <div class="card"><div class="card-hd"><h3>Client locations</h3><span class="meta">click a client</span><button class="btn ghost" onclick="__toggleAddLoc()">+ Add Location</button></div>
     <div id="addLocForm" style="display:none;padding:16px 20px;border-bottom:1px solid var(--border)">
       <form onsubmit="return __submitAddLoc(event,'${agencyId}',${fromAdmin?'true':'false'})">
@@ -803,11 +863,13 @@ async function __ghlPost(url, body){
 }
 // Authenticated GET against the API. Used for state that lives in the API's own
 // Postgres rather than in Supabase, so it can't be read with sb.from(...).
-async function __apiGet(url){
+async function __apiGet(url, extraHeaders){
   const {data:{session}} = await sb.auth.getSession();
   if(!session) return {};
-  const resp = await fetch(url, {headers:{"Authorization":"Bearer "+session.access_token}});
-  if(!resp.ok) return {};
+  const headers = Object.assign({"Authorization":"Bearer "+session.access_token}, extraHeaders||{});
+  const resp = await fetch(url, {headers});
+  // Edge functions return a JSON body on 4xx too (e.g. {ok:false,reason:...}),
+  // and the billing card needs that reason to explain itself. Parse regardless.
   try{ return await resp.json(); }catch(e){ return {}; }
 }
 // Build a credentials payload from a pit/cid/mode tri.  Returns {error} when the
