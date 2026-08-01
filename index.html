@@ -200,6 +200,7 @@ async function boot(){
   PROFILE={...prof,email:session.user.email};
   await loadProducts();
   render();
+  mountAssistant();
 }
 sb.auth.onAuthStateChange((_e,s)=>{
   // Embed mode renders solely from agencyEmbedFlow() after a fresh SSO handshake.
@@ -1147,6 +1148,155 @@ async function clientViewFRC(locationId, fromDrill){
   <div class="kpis">${kpi('Requests',fmt(lm.requests),'this month')}${kpi('Tokens in',fmtTok(lm.tokens_in),'this month')}${kpi('Tokens out',fmtTok(lm.tokens_out),'this month')}${kpi('Avg tokens/req',fmt(avg),'in + out')}</div>
   ${tierTable(T)}
   <div class="card"><div class="card-hd"><h3>How you're billed</h3></div><div style="padding:16px 20px"><div class="note" style="margin:0">Your plan is billed by <b>concurrent lane</b>, not by tokens or requests. Everything above is throughput on your bare-metal lanes — run as much through them as you like; these numbers never change your bill.</div></div></div>`;
+}
+
+/* ===== ACCOUNT ASSISTANT (natural-language admin chat) =====================
+   A persistent slide-out that sits ALONGSIDE the existing dashboard nav. It is
+   mounted once as a direct child of <body> (outside #root) so shell()/render()
+   never clobber it. It talks to POST /api/assistant with the caller's Supabase
+   token; for a super_admin it passes the agency currently in view (NAV.agency)
+   so they aren't asked to name it every message. Write actions come back as a
+   pending_action rendered with Confirm / Cancel buttons — the action only fires
+   on Confirm (never a typed "yes").
+=========================================================================== */
+const ASSISTANT_API = 'https://api.flatratevoice.com/api/assistant';
+window.__ax = { history: [], pending: null, busy: false, open: false };
+
+function mountAssistant(){
+  if(typeof EMBED !== 'undefined' && EMBED) return;               // never in the GHL iframe
+  if(!PROFILE || !['agency_admin','super_admin'].includes(PROFILE.role)) return;
+  if(document.getElementById('ax-root')) return;                  // mount once
+
+  const style = document.createElement('style');
+  style.textContent = `
+  #ax-fab{position:fixed;right:22px;bottom:22px;z-index:9000;width:56px;height:56px;border-radius:50%;
+    border:1px solid var(--border);background:var(--accent,#00D4FF);color:#04121a;font-size:24px;cursor:pointer;
+    box-shadow:0 6px 22px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center}
+  #ax-panel{position:fixed;right:0;top:0;height:100%;width:min(420px,100vw);z-index:9001;transform:translateX(105%);
+    transition:transform .22s ease;background:var(--s0,#0b1220);border-left:1px solid var(--border);display:flex;flex-direction:column;
+    box-shadow:-12px 0 40px rgba(0,0,0,.5)}
+  #ax-panel.open{transform:translateX(0)}
+  #ax-hd{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  #ax-hd b{color:var(--white)} #ax-hd .sub{font-size:12px;color:var(--slate4,#8aa)}
+  #ax-close{background:none;border:none;color:var(--slate4,#8aa);font-size:20px;cursor:pointer}
+  #ax-log{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+  .ax-msg{max-width:88%;padding:9px 12px;border-radius:12px;font-size:14px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}
+  .ax-user{align-self:flex-end;background:var(--accent,#00D4FF);color:#04121a}
+  .ax-bot{align-self:flex-start;background:var(--s1,#111a2b);color:var(--white);border:1px solid var(--border)}
+  .ax-sys{align-self:center;font-size:12px;color:var(--slate4,#8aa)}
+  .ax-confirm{align-self:flex-start;width:88%;background:var(--s1,#111a2b);border:1px solid var(--accent,#00D4FF);border-radius:12px;padding:12px}
+  .ax-confirm .act{font-size:12px;color:var(--slate4,#8aa);margin-bottom:8px;font-family:ui-monospace,monospace;white-space:pre-wrap}
+  .ax-confirm .row{display:flex;gap:8px;margin-top:6px}
+  .ax-confirm button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-weight:600}
+  .ax-yes{background:var(--accent,#00D4FF);color:#04121a} .ax-no{background:transparent;color:var(--white)}
+  #ax-form{border-top:1px solid var(--border);padding:10px;display:flex;gap:8px}
+  #ax-in{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--s1,#111a2b);color:var(--white);resize:none;font:inherit;max-height:120px}
+  #ax-send{padding:0 14px;border-radius:8px;border:none;background:var(--accent,#00D4FF);color:#04121a;font-weight:700;cursor:pointer}
+  #ax-send:disabled{opacity:.5;cursor:default}`;
+  document.head.appendChild(style);
+
+  const wrap = document.createElement('div');
+  wrap.id = 'ax-root';
+  wrap.innerHTML = `
+    <button id="ax-fab" title="Account assistant">💬</button>
+    <div id="ax-panel" role="dialog" aria-label="Account assistant">
+      <div id="ax-hd"><div><b>Account assistant</b><div class="sub">Manage your account by chatting</div></div>
+        <button id="ax-close" title="Close">✕</button></div>
+      <div id="ax-log"></div>
+      <form id="ax-form"><textarea id="ax-in" rows="1" placeholder="Ask or tell me what to do…"></textarea>
+        <button id="ax-send" type="submit">Send</button></form>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const panel=$('ax-panel');
+  $('ax-fab').onclick=()=>{ window.__ax.open=!window.__ax.open; panel.classList.toggle('open',window.__ax.open);
+    if(window.__ax.open){ if(!$('ax-log').childElementCount) __axSystem("Hi! I can look up locations, usage, billing and transcripts, and — with your confirmation — add a location, set a greeting mode, connect GoHighLevel, or update widget branding. What do you need?"); $('ax-in').focus(); } };
+  $('ax-close').onclick=()=>{ window.__ax.open=false; panel.classList.remove('open'); };
+  $('ax-form').addEventListener('submit',e=>{ e.preventDefault(); __axSend(); });
+  $('ax-in').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); __axSend(); } });
+  $('ax-in').addEventListener('input',e=>{ e.target.style.height='auto'; e.target.style.height=Math.min(120,e.target.scrollHeight)+'px'; });
+}
+
+function __axBubble(cls,text){ const d=document.createElement('div'); d.className='ax-msg '+cls; d.textContent=text; $('ax-log').appendChild(d); $('ax-log').scrollTop=$('ax-log').scrollHeight; return d; }
+function __axSystem(text){ __axBubble('ax-sys',text); }
+
+// The agency currently in view — sent so a super_admin isn't asked to name it
+// every message. agency_admin is always scoped to their own agency server-side.
+function __axAgencyCtx(){ return (PROFILE && PROFILE.role==='super_admin') ? (NAV.agency||undefined) : undefined; }
+
+async function __axPost(payload){
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session){ __axSystem('Your session expired — please sign in again.'); return null; }
+  const ctx=__axAgencyCtx();
+  const res = await fetch(ASSISTANT_API,{ method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+    body: JSON.stringify({...payload, ...(ctx?{agency_id:ctx}:{})}) });
+  let body={}; try{ body=await res.json(); }catch{}
+  return { status:res.status, body };
+}
+
+function __axSetBusy(b){ window.__ax.busy=b; const s=$('ax-send'); if(s) s.disabled=b; }
+
+async function __axSend(){
+  if(window.__ax.busy) return;
+  const inEl=$('ax-in'); const text=(inEl.value||'').trim(); if(!text) return;
+  inEl.value=''; inEl.style.height='auto';
+  __axBubble('ax-user',text);
+  __axSetBusy(true); const thinking=__axBubble('ax-bot','…');
+  try{
+    const r = await __axPost({ message:text, history: window.__ax.history });
+    thinking.remove();
+    if(!r){ __axSetBusy(false); return; }
+    if(r.status!==200 || !r.body || r.body.ok===false){ __axBubble('ax-bot','Sorry — '+((r.body&&r.body.error)||('request failed ('+r.status+')'))); __axSetBusy(false); return; }
+    __axHandle(r.body);
+  }catch(err){ thinking.remove(); __axBubble('ax-bot','Network error: '+err.message); }
+  __axSetBusy(false);
+}
+
+// A chat-turn response: either a plain message, or a write proposal to confirm.
+function __axHandle(body){
+  if(Array.isArray(body.history)) window.__ax.history = body.history;
+  if(body.assistant) __axBubble('ax-bot', body.assistant);
+  if(body.mode==='confirm' && body.pending_action){ window.__ax.pending=body.pending_action; __axRenderConfirm(body.pending_action); }
+}
+
+function __axRenderConfirm(pa){
+  const card=document.createElement('div'); card.className='ax-confirm';
+  const args=Object.entries(pa.input||{}).map(([k,v])=>`${k}: ${v}`).join('\n');
+  card.innerHTML=`<div class="act"><b>${esc(pa.tool)}</b>${args?'\n'+esc(args):''}</div>
+    <div class="row"><button class="ax-yes">Confirm</button><button class="ax-no">Cancel</button></div>`;
+  card.querySelector('.ax-yes').onclick=()=>__axConfirm(card,true);
+  card.querySelector('.ax-no').onclick=()=>__axConfirm(card,false);
+  $('ax-log').appendChild(card); $('ax-log').scrollTop=$('ax-log').scrollHeight;
+}
+
+async function __axConfirm(card, go){
+  if(window.__ax.busy) return;
+  const pa=window.__ax.pending; if(!pa) return;
+  card.querySelectorAll('button').forEach(b=>b.disabled=true);
+  __axSetBusy(true);
+  try{
+    if(!go){
+      // Cancel: tell the model the user declined, so it acknowledges instead of
+      // waiting on a tool_result that never comes.
+      window.__ax.history.push({ role:'user', content:[{ type:'tool_result', tool_use_id:pa.tool_use_id, content:'The user cancelled this action. Do not perform it.' }] });
+      window.__ax.pending=null; card.remove(); __axSystem('Cancelled.');
+      const r=await __axPost({ history: window.__ax.history }); if(r&&r.status===200&&r.body) __axHandle(r.body);
+      __axSetBusy(false); return;
+    }
+    const ex=await __axPost({ confirm: pa });
+    window.__ax.pending=null; card.remove();
+    if(!ex || ex.status!==200 || !ex.body){ __axBubble('ax-bot','Could not run that action ('+((ex&&ex.status)||'network')+').'); __axSetBusy(false); return; }
+    const ok = ex.body.result && ex.body.result.ok;
+    __axSystem(ok ? '✓ Done.' : '⚠ '+((ex.body.result&&(ex.body.result.message||ex.body.result.error))||'the action did not complete'));
+    if(ex.body.tool_result_message){
+      window.__ax.history.push(ex.body.tool_result_message);
+      const r=await __axPost({ history: window.__ax.history }); if(r&&r.status===200&&r.body) __axHandle(r.body);
+    }
+    // A successful write changes state the dashboard shows — refresh it underneath.
+    if(ok && typeof render==='function') render();
+  }catch(err){ __axBubble('ax-bot','Error: '+err.message); }
+  __axSetBusy(false);
 }
 
 boot();
