@@ -100,6 +100,40 @@ const EMBED = location.pathname.replace(/\/+$/,'') === '/agency-embed';
 let EMBED_VERIFIED = false;      // true only after a fresh SSO handshake this load
 
 const TIER = { starter:{pool:2500,price:297,ovg:.07}, growth:{pool:6000,price:497,ovg:.07}, scale:{pool:12000,price:997,ovg:.05} };
+
+/* ===== PER-LOCATION PRIMARY LANGUAGE =====================================
+   Open BCP-47 codes — the model supports all 97. The dropdown surfaces a
+   curated set first (US-market demand order) then the rest A–Z; native
+   type-ahead handles search. This sets only the greeting default + SMS/recap
+   language, never the live conversation (which auto-mirrors the caller). */
+const LANGUAGES={"af":"Afrikaans","ak":"Akan","sq":"Albanian","am":"Amharic","ar":"Arabic","hy":"Armenian","as":"Assamese","az":"Azerbaijani","eu":"Basque","be":"Belarusian","bn":"Bengali","bs":"Bosnian","bg":"Bulgarian","my":"Burmese","ca":"Catalan","ceb":"Cebuano","zh":"Chinese","hr":"Croatian","cs":"Czech","da":"Danish","nl":"Dutch","en":"English","et":"Estonian","fo":"Faroese","fil":"Filipino","fi":"Finnish","fr":"French","gl":"Galician","ka":"Georgian","de":"German","el":"Greek","gu":"Gujarati","ha":"Hausa","iw":"Hebrew","hi":"Hindi","hu":"Hungarian","is":"Icelandic","id":"Indonesian","ga":"Irish","it":"Italian","ja":"Japanese","kn":"Kannada","kk":"Kazakh","km":"Khmer","rw":"Kinyarwanda","ko":"Korean","ku":"Kurdish","ky":"Kyrgyz","lo":"Lao","lv":"Latvian","lt":"Lithuanian","mk":"Macedonian","ms":"Malay","ml":"Malayalam","mt":"Maltese","mi":"Maori","mr":"Marathi","mn":"Mongolian","ne":"Nepali","no":"Norwegian","or":"Odia","om":"Oromo","ps":"Pashto","fa":"Persian","pl":"Polish","pt":"Portuguese","pa":"Punjabi","qu":"Quechua","ro":"Romanian","rm":"Romansh","ru":"Russian","sr":"Serbian","sd":"Sindhi","si":"Sinhala","sk":"Slovak","sl":"Slovenian","so":"Somali","st":"Southern Sotho","es":"Spanish","sw":"Swahili","sv":"Swedish","tg":"Tajik","ta":"Tamil","te":"Telugu","th":"Thai","tn":"Tswana","tr":"Turkish","tk":"Turkmen","uk":"Ukrainian","ur":"Urdu","uz":"Uzbek","vi":"Vietnamese","cy":"Welsh","fy":"Western Frisian","wo":"Wolof","yo":"Yoruba","zu":"Zulu"};
+const CURATED_LANGS=[["en","English"],["es","Spanish"],["zh","Chinese"],["fil","Tagalog"],["vi","Vietnamese"],["ar","Arabic"],["fr","French"],["ko","Korean"],["pt","Portuguese"],["ru","Russian"]];
+function __langOptionsHtml(current){
+  current = current || 'en';
+  const curatedCodes = new Set(CURATED_LANGS.map(c=>c[0]));
+  const opt = (code,label)=>`<option value="${code}"${code===current?' selected':''}>${esc(label)}</option>`;
+  const common = CURATED_LANGS.map(([c,l])=>opt(c,l)).join('');
+  const rest = Object.entries(LANGUAGES).filter(([c])=>!curatedCodes.has(c))
+    .sort((a,b)=>a[1].localeCompare(b[1])).map(([c,l])=>opt(c,l)).join('');
+  return `<optgroup label="Common">${common}</optgroup><optgroup label="All languages">${rest}</optgroup>`;
+}
+window.__saveLocationLanguage = async function(ghlLocationId, locationId, fromDrill){
+  const sel = document.getElementById('locLang'), msg = document.getElementById('locLangMsg'),
+        btn = document.getElementById('locLangSaveBtn');
+  if(!sel) return;
+  const lang = sel.value; if(btn) btn.disabled = true;
+  const show=(cls,t)=>{ if(msg){ msg.style.display='block'; msg.className='msg '+cls; msg.textContent=t; } };
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch(`https://api.flatratevoice.com/api/locations/${ghlLocationId}/language`, {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+      body: JSON.stringify({language: lang}) });
+    const r = await resp.json();
+    if(resp.ok && r.ok) show('ok','✓ Saved — greeting and follow-ups will use '+esc(r.language_name||lang)+'.');
+    else show('err', r.error || ('Save failed ('+resp.status+').'));
+  }catch(err){ show('err','Network error: '+err.message); }
+  if(btn) btn.disabled = false;
+};
 const $ = s => document.getElementById(s);
 const root = $('root');
 let PROFILE=null, NAV={}, PRODUCTS=[];
@@ -730,13 +764,14 @@ async function clientView(locationId,fromDrill){
   const [{data:lm},{data:calls},{data:widgetRow}] = await Promise.all([
     sb.from('location_month_usage').select('*').eq('location_id',locationId).maybeSingle(),
     sb.from('calls').select('started_at,from_number,duration_sec,outcome').eq('location_id',locationId).order('started_at',{ascending:false}).limit(10),
-    sb.from('locations').select('embed_token,widget_enabled,ghl_location_id,agency_id').eq('id',locationId).maybeSingle()
+    sb.from('locations').select('embed_token,widget_enabled,ghl_location_id,agency_id,primary_language').eq('id',locationId).maybeSingle()
     ]);
   if(!lm){$('view').innerHTML=`<div class="center">No data for this location.</div>`;return;}
   const rate=lm.calls>0?Math.round(lm.booked/lm.calls*100):0;
   const wEnabled = widgetRow && widgetRow.widget_enabled;
   const wToken = widgetRow && widgetRow.embed_token;
   const wGhlId = widgetRow ? widgetRow.ghl_location_id : '';
+  const wLang = (widgetRow && widgetRow.primary_language) || 'en';
   // The snippet is what gets pasted into the end client's website, so it must
   // carry the agency's own widget domain when they have one — otherwise a
   // white-labeled agency hands their client a platform hostname to paste in.
@@ -784,6 +819,17 @@ async function clientView(locationId,fromDrill){
     </div>
     <div class="meta" style="margin-top:10px"><b>Leaving the PIT and Sub-Account ID blank means this location inherits the agency default.</b> Enter both together to set a per-location override. Greeting mode can be changed on its own. The PIT is write-only and never shown back, so it always starts blank.</div>
   ` : `<div class="muted">This location doesn't have a GHL location ID yet, so contact recognition can't be configured here.</div>`}
+  </div></div>
+  <div class="card"><div class="card-hd"><h3>Primary Language</h3><span class="meta">greeting default + SMS/recap · the live conversation always matches the caller</span></div>
+  <div style="padding:16px 20px">
+  ${wGhlId ? `
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:540px">
+      <select id="locLang" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white);min-width:220px">${__langOptionsHtml(wLang)}</select>
+      <button class="btn" id="locLangSaveBtn" onclick="__saveLocationLanguage('${wGhlId}','${locationId}',${fromDrill?'true':'false'})">Save</button>
+    </div>
+    <div id="locLangMsg" class="msg" style="margin-top:12px;display:none"></div>
+    <div class="meta" style="margin-top:10px">Sets the language the opening greeting plays in (before the caller has spoken) and the language of SMS confirmations and recap emails. It does <b>not</b> limit the conversation — the assistant always replies in whatever language the caller uses. Any of the 97 languages the model supports; type to search.</div>
+  ` : `<div class="muted">This location doesn't have a GHL location ID yet, so language can't be configured here.</div>`}
   </div></div>
   <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
   <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>
