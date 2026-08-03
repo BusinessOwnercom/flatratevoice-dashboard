@@ -177,7 +177,7 @@ window.__rbLoadLocation = async function(ghlLocationId, locationId, agencyId){
     return;
   }
   const def = ag && ag.default_client_retainer_cents;
-  if(sub && sub.enabled && sub.status!=='canceled'){
+  if(sub && sub.status && sub.status!=='canceled' && sub.status!=='draft'){
     const paused = sub.status==='paused';
     box.innerHTML=`<div style="display:grid;gap:6px;max-width:540px">
       <div><span class="tag ${paused?'warn':'booked'}">${esc(sub.status)}</span> <b>${__money(sub.retainer_cents)}/mo</b> · ${esc(sub.client_name||sub.client_email||'client')}</div>
