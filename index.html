@@ -117,6 +117,115 @@ function __langOptionsHtml(current){
     .sort((a,b)=>a[1].localeCompare(b[1])).map(([c,l])=>opt(c,l)).join('');
   return `<optgroup label="Common">${common}</optgroup><optgroup label="All languages">${rest}</optgroup>`;
 }
+/* ===== CLIENT REBILLING (Stripe Connect Express) ========================
+   Agency bills its own end clients a flat monthly retainer per location. FRV
+   takes no cut (direct charges on the agency's connected account). All calls go
+   to the stripe-rebilling edge fn with the caller's token; the client never
+   logs into FRV — they just get a copyable Stripe Checkout link. */
+const REBILLING_FN = SUPABASE_URL + '/functions/v1/stripe-rebilling';
+async function __rbPost(payload){
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session) return {ok:false,status:401,body:{error:'session expired'}};
+  const res = await fetch(REBILLING_FN, { method:'POST',
+    headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':'Bearer '+session.access_token},
+    body: JSON.stringify(payload) });
+  let body={}; try{ body=await res.json(); }catch{}
+  return {ok:res.ok,status:res.status,body:body||{}};
+}
+const __money = c => '$'+(Number(c||0)/100).toFixed(2);
+
+// ----- Agency-level: connect Stripe + optional default retainer -----
+window.__rbLoadAgencyStatus = async function(agencyId){
+  const el=document.getElementById('rbAgencyStatus'); if(!el) return;
+  const r=await __rbPost({action:'connect_status', agency_id:agencyId});
+  if(!r.ok||!r.body.ok){ el.innerHTML='<span class="muted">Could not load Stripe status.</span>'; return; }
+  if(!r.body.connected){
+    el.innerHTML=`<span class="tag no_booking">Not connected</span> <button class="btn" onclick="__rbConnect('${agencyId}')">Connect Stripe</button>
+      <div class="meta" style="margin-top:8px">Connect your own Stripe account (Stripe-hosted Express onboarding) to bill your clients. FlatRateVoice never touches the money and takes no cut.</div>`;
+  } else if(!r.body.charges_enabled){
+    el.innerHTML=`<span class="tag warn">Setup incomplete</span> <button class="btn" onclick="__rbConnect('${agencyId}')">Finish setup</button>
+      <div class="meta" style="margin-top:8px">Stripe still needs a few details before you can charge clients.</div>`;
+  } else {
+    el.innerHTML=`<span class="tag booked">✓ Connected</span> <span class="meta">Payouts ${r.body.payouts_enabled?'enabled':'pending'} · account <span class="mono">${esc(r.body.account)}</span></span>`;
+  }
+};
+window.__rbConnect = async function(agencyId){
+  const r=await __rbPost({action:'connect_start', agency_id:agencyId});
+  if(r.ok && r.body.ok && r.body.url){ window.location.href = r.body.url; }
+  else { const el=document.getElementById('rbAgencyStatus'); if(el) el.innerHTML='<span class="muted">Could not start Stripe onboarding: '+esc((r.body&&r.body.error)||r.status)+'</span>'; }
+};
+window.__rbSaveDefault = async function(agencyId){
+  const inp=document.getElementById('rbDefault'), msg=document.getElementById('rbDefaultMsg');
+  const dollars=(inp.value||'').trim();
+  const cents = dollars==='' ? '' : Math.round(parseFloat(dollars)*100);
+  const r=await __rbPost({action:'set_default_retainer', agency_id:agencyId, default_client_retainer_cents:cents});
+  if(msg){ msg.style.display='block'; msg.className='msg '+(r.ok&&r.body.ok?'ok':'err');
+    msg.textContent = r.ok&&r.body.ok ? '✓ Default saved.' : ((r.body&&r.body.error)||'Save failed.'); }
+};
+
+// ----- Location-level: opt-in, generate link, pause/resume -----
+window.__rbLoadLocation = async function(ghlLocationId, locationId, agencyId){
+  const box=document.getElementById('rbLocBox'); if(!box) return;
+  const [{data:sub}, {data:ag}, status] = await Promise.all([
+    sb.from('client_subscriptions').select('*').eq('location_id',locationId).maybeSingle(),
+    sb.from('agencies').select('default_client_retainer_cents').eq('id',agencyId).maybeSingle(),
+    __rbPost({action:'connect_status', agency_id:agencyId})
+  ]);
+  const connected = status.ok && status.body.ok && status.body.connected && status.body.charges_enabled;
+  if(!connected){
+    box.innerHTML=`<div class="muted">Connect your Stripe account first (on the agency page) to bill this client.</div>`;
+    return;
+  }
+  const def = ag && ag.default_client_retainer_cents;
+  if(sub && sub.enabled && sub.status!=='canceled'){
+    const paused = sub.status==='paused';
+    box.innerHTML=`<div style="display:grid;gap:6px;max-width:540px">
+      <div><span class="tag ${paused?'warn':'booked'}">${esc(sub.status)}</span> <b>${__money(sub.retainer_cents)}/mo</b> · ${esc(sub.client_name||sub.client_email||'client')}</div>
+      ${sub.status==='checkout_pending'?`<div class="meta">Waiting for the client to complete payment via the Checkout link.</div>`:''}
+      <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+        ${paused?`<button class="btn" onclick="__rbResume('${ghlLocationId}','${locationId}','${agencyId}')">Resume billing</button>`
+                :`<button class="btn ghost" onclick="__rbPause('${ghlLocationId}','${locationId}','${agencyId}')">Pause billing</button>`}
+      </div>
+      <div id="rbLocMsg" class="msg" style="margin-top:10px;display:none"></div></div>`;
+  } else {
+    box.innerHTML=`<div style="display:grid;gap:12px;max-width:540px">
+      <div class="meta">Rebilling is off for this location. Enable it to charge this client a flat monthly retainer — the charge goes 100% to your connected Stripe account.</div>
+      <div><label class="meta">Client name</label><br><input id="rbName" type="text" autocomplete="off" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      <div><label class="meta">Client email</label><br><input id="rbEmail" type="email" autocomplete="off" placeholder="client@business.com" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      <div><label class="meta">Monthly retainer (USD)</label><br><input id="rbAmount" type="number" min="1" step="1" value="${def?(def/100):''}" placeholder="e.g. 500" style="width:160px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"></div>
+      <div><button class="btn" onclick="__rbEnable('${ghlLocationId}','${locationId}','${agencyId}')">Enable & create payment link</button></div>
+      <div id="rbLocMsg" class="msg" style="display:none"></div>
+      <div id="rbLink"></div></div>`;
+  }
+};
+window.__rbEnable = async function(ghlLocationId, locationId, agencyId){
+  const name=(document.getElementById('rbName').value||'').trim();
+  const email=(document.getElementById('rbEmail').value||'').trim();
+  const amt=parseFloat(document.getElementById('rbAmount').value||'');
+  const msg=document.getElementById('rbLocMsg');
+  const show=(cls,t)=>{ if(msg){msg.style.display='block';msg.className='msg '+cls;msg.textContent=t;} };
+  if(!email || !(amt>0)){ show('err','Client email and a positive retainer are required.'); return; }
+  show('ok','Creating…');
+  const r=await __rbPost({action:'enable_location', ghl_location_id:ghlLocationId, client_name:name, client_email:email, retainer_cents:Math.round(amt*100)});
+  if(r.ok && r.body.ok && r.body.checkout_url){
+    show('ok','✓ Enabled. Send this Checkout link to your client:');
+    const box=document.getElementById('rbLink');
+    if(box) box.innerHTML=`<div style="display:flex;gap:8px;margin-top:8px"><input readonly value="${esc(r.body.checkout_url)}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white);font-size:12px"><button class="btn ghost" onclick="navigator.clipboard.writeText('${esc(r.body.checkout_url)}')">Copy</button></div>
+      <div class="meta" style="margin-top:6px">The client pays on Stripe — they never need a FlatRateVoice login. Status updates here automatically once they pay.</div>`;
+  } else {
+    const e=(r.body&&r.body.error)||('failed ('+r.status+')');
+    show('err', e==='connect_stripe_first'?'Connect your Stripe account first (agency page).':e==='stripe_onboarding_incomplete'?'Finish your Stripe setup first (agency page).':e);
+  }
+};
+window.__rbPause = async function(ghlLocationId, locationId, agencyId){
+  const r=await __rbPost({action:'pause', ghl_location_id:ghlLocationId});
+  if(r.ok&&r.body.ok) __rbLoadLocation(ghlLocationId, locationId, agencyId);
+};
+window.__rbResume = async function(ghlLocationId, locationId, agencyId){
+  const r=await __rbPost({action:'resume', ghl_location_id:ghlLocationId});
+  if(r.ok&&r.body.ok) __rbLoadLocation(ghlLocationId, locationId, agencyId);
+};
+
 window.__saveLocationLanguage = async function(ghlLocationId, locationId, fromDrill){
   const sel = document.getElementById('locLang'), msg = document.getElementById('locLangMsg'),
         btn = document.getElementById('locLangSaveBtn');
@@ -500,7 +609,7 @@ async function agencyView(agencyId,fromAdmin){
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
     sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
-    sb.from('agencies').select('ghl_webhook_url,ghl_company_id').eq('id',agencyId).maybeSingle(),
+    sb.from('agencies').select('ghl_webhook_url,ghl_company_id,default_client_retainer_cents').eq('id',agencyId).maybeSingle(),
     __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({})),
     // A network/CORS failure rejects this fetch (e.g. the apikey-preflight
     // regression). Without a signal the card silently swaps live billing for
@@ -531,6 +640,13 @@ async function agencyView(agencyId,fromAdmin){
       : `<div class="meta" style="margin-bottom:8px">In GoHighLevel, open the FlatRateVoice Custom Page — it shows a one-time code. Enter it here to connect this agency.</div>
       <div style="display:flex;gap:10px;max-width:420px"><input id="ghlCodeInput" placeholder="8-character code" autocomplete="off" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white);text-transform:uppercase;letter-spacing:2px"><button class="btn" onclick="__connectGhl('${agencyId}')">Connect</button></div>
       <div id="ghlConnectMsg" class="meta" style="margin-top:8px"></div>`}</div></div>
+    <div class="card"><div class="card-hd"><h3>Client Billing (Stripe Connect)</h3><span class="meta">bill your own clients a flat monthly retainer · FlatRateVoice takes no cut</span></div>
+    <div style="padding:16px 20px">
+      <div id="rbAgencyStatus" class="meta">Loading Stripe status…</div>
+      <div style="margin-top:14px;max-width:420px"><label class="meta">Default monthly retainer (USD, optional — prefills new locations)</label><br>
+        <div style="display:flex;gap:10px;margin-top:6px"><input id="rbDefault" type="number" min="1" step="1" value="${(ghlRow&&ghlRow.default_client_retainer_cents)?(ghlRow.default_client_retainer_cents/100):''}" placeholder="e.g. 500" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--s1);color:var(--white)"><button class="btn ghost" onclick="__rbSaveDefault('${agencyId}')">Save</button></div>
+        <div id="rbDefaultMsg" class="msg" style="margin-top:8px;display:none"></div></div>
+    </div></div>
     <div class="card"><div class="card-hd"><h3>GHL Contact Recognition — Agency Default</h3><span class="meta">applies to every location unless a location sets its own override</span></div>
     <div style="padding:16px 20px">
       <div id="agyGhlMsg" class="msg" style="margin-bottom:12px;display:none"></div>
@@ -610,6 +726,7 @@ async function agencyView(agencyId,fromAdmin){
     </div>
     <table><thead><tr><th>Client</th><th>Vertical</th><th>Minutes</th><th>Calls</th><th>Booked</th><th>Book rate</th></tr></thead><tbody>${rows||'<tr><td colspan=6 class="muted" style="padding:20px">No locations yet.</td></tr>'}</tbody></table></div>
     ${callsCard(calls,true)}`;
+  __rbLoadAgencyStatus(agencyId);
 }
 
 window.__toggleAddLoc = function(){
@@ -820,6 +937,11 @@ async function clientView(locationId,fromDrill){
     <div class="meta" style="margin-top:10px"><b>Leaving the PIT and Sub-Account ID blank means this location inherits the agency default.</b> Enter both together to set a per-location override. Greeting mode can be changed on its own. The PIT is write-only and never shown back, so it always starts blank.</div>
   ` : `<div class="muted">This location doesn't have a GHL location ID yet, so contact recognition can't be configured here.</div>`}
   </div></div>
+  <div class="card"><div class="card-hd"><h3>Client Billing</h3><span class="meta">charge this client a flat monthly retainer · 100% to your Stripe, FRV takes no cut</span></div>
+  <div style="padding:16px 20px">
+  ${wGhlId ? `<div id="rbLocBox"><div class="muted">Loading…</div></div>`
+           : `<div class="muted">This location doesn't have a GHL location ID yet, so billing can't be configured here.</div>`}
+  </div></div>
   <div class="card"><div class="card-hd"><h3>Primary Language</h3><span class="meta">greeting default + SMS/recap · the live conversation always matches the caller</span></div>
   <div style="padding:16px 20px">
   ${wGhlId ? `
@@ -836,6 +958,7 @@ async function clientView(locationId,fromDrill){
   <div class="card"><div class="card-hd"><h3>Call Transcripts</h3><span class="meta">stored permanently · full text for the last 90 days</span><button class="btn ghost" onclick="__loadTranscripts('${wGhlId}')">Load transcripts</button></div>
   <div id="transcriptBox" style="padding:16px 20px"><div class="muted">Click "Load transcripts" to view conversation history.</div></div></div>`;
   if(wGhlId) __loadGhlContactStatus(wGhlId);
+  if(wGhlId) __rbLoadLocation(wGhlId, locationId, widgetRow.agency_id);
 }
 
   window.__loadTranscripts = async function(ghlLocationId){
