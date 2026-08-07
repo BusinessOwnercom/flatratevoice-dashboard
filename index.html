@@ -258,9 +258,20 @@ window.__saveLocationLanguage = async function(ghlLocationId, locationId, fromDr
 const AC_MODES = [['','Inherit agency default'],['off','Off'],
                   ['name','Greet by name'],['confirm','Confirm name']];
 const acVal = m => (m === null || m === undefined) ? '' : m;
+/* timeAgo() calls d.getTime(), so it takes a Date -- every other caller in this
+   file passes new Date(...). The draft API sends updated_at as an ISO STRING
+   (isoformat()), so passing it straight through threw "d.getTime is not a
+   function". Returns null for a missing or unparseable timestamp so the caller
+   can omit the line entirely rather than print "NaNm ago". */
+const acAgo = iso => {
+  if(!iso) return null;
+  const dt = new Date(iso);
+  return isNaN(dt.getTime()) ? null : timeAgo(dt);
+};
 
 window.__acLoad = async function(ghl){
   const box = $('acBox'); if(!box) return;
+  let payload;
   try{
     const {data:{session}} = await sb.auth.getSession();
     const H = {"Authorization":"Bearer "+session.access_token};
@@ -271,8 +282,27 @@ window.__acLoad = async function(ghl){
       box.innerHTML = '<span class="muted">Couldn\'t load the agent config ('+esc(lj.error||('HTTP '+lr.status))+').</span>';
       return;
     }
-    __acRender(ghl, lj.config||{}, (dj && dj.ok) ? dj.draft : null);
-  }catch(e){ box.innerHTML = '<span class="muted">Network error: '+esc(e.message)+'</span>'; }
+    payload = { live: lj.config||{}, draft: (dj && dj.ok) ? dj.draft : null };
+  }catch(e){
+    box.innerHTML = '<span class="muted">Network error: '+esc(e.message)+'</span> '
+      + '<a href="#" onclick="__acLoad(\''+ghl+'\');return false;">Retry</a>';
+    return;
+  }
+  // A RENDER failure is not a FETCH failure, and must not be handled like one.
+  // The old catch wrapped both and replaced the card body with a single error
+  // line -- so one bad value (an ISO string reaching timeAgo) destroyed the
+  // textarea, every field and every button, leaving a full page reload as the
+  // only way back. Keep a working card on screen whenever there still is one.
+  try{
+    __acRender(ghl, payload.live, payload.draft);
+  }catch(e){
+    if($('acPrompt')){
+      __acShow('err','Couldn\'t refresh the editor ('+esc(e.message)+'). What you see is the previous state -- reload the page before trusting it.');
+    } else {
+      box.innerHTML = '<div class="msg err" style="display:block">Couldn\'t display the agent config ('+esc(e.message)+'). '
+        + '<a href="#" onclick="__acLoad(\''+ghl+'\');return false;">Retry</a></div>';
+    }
+  }
 };
 
 window.__acRender = function(ghl, live, draft){
@@ -293,6 +323,8 @@ window.__acRender = function(ghl, live, draft){
       + esc(lbl(draft.seeded_greeting_mode)) + ' &rarr; ' + esc(lbl(live.caller_greeting_mode))
       + '). Promote will be refused until you discard this draft and start again, so the change isn\'t silently reverted.</div>';
   }
+
+  const savedAgo = draft ? acAgo(draft.updated_at) : null;
 
   const modeOpts = AC_MODES.map(([v,l]) =>
     '<option value="'+v+'"'+(acVal(cur.caller_greeting_mode)===v?' selected':'')+'>'+esc(l)+'</option>').join('');
@@ -330,7 +362,7 @@ window.__acRender = function(ghl, live, draft){
     // happened", which is precisely how the blocked-PUT bug stayed invisible.
     + '<div id="acMsg" class="msg" style="margin-top:12px;margin-bottom:0"></div>'
     + '<div id="acReviewBox" style="margin-top:16px"></div>'
-    + (draft && draft.updated_at ? '<div class="meta" style="margin-top:10px">Draft last saved '+esc(timeAgo(draft.updated_at))+'.</div>' : '')
+    + (savedAgo ? '<div class="meta" style="margin-top:10px">Draft last saved '+esc(savedAgo)+'.</div>' : '')
     + '<div class="meta" style="margin-top:10px">Saving affects nothing live. Callers keep hearing the current configuration until the draft is promoted.</div>';
 };
 
