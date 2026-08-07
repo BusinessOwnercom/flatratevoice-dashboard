@@ -243,6 +243,131 @@ window.__saveLocationLanguage = async function(ghlLocationId, locationId, fromDr
   }catch(err){ show('err','Network error: '+err.message); }
   if(btn) btn.disabled = false;
 };
+
+/* ===== AGENT CONFIG DRAFT EDITOR (Live Testing Labs) ======================
+   Draft-first: nothing here changes live call behaviour. Saving writes only to
+   agent_config_drafts; Promote is a separate explicit action (not built yet).
+
+   Two fields are deliberately not editable here:
+     * primary_language -- POST /api/locations/{id}/language is its ONLY writer
+       (the draft API rejects it outright). Shown read-only for context, with a
+       pointer to the card that does own it.
+     * persona_name -- editable and promotable, but nothing in the call path
+       reads it yet, so it is labelled inactive rather than implying an effect
+       it does not have.                                                      */
+const AC_MODES = [['','Inherit agency default'],['off','Off'],
+                  ['name','Greet by name'],['confirm','Confirm name']];
+const acVal = m => (m === null || m === undefined) ? '' : m;
+
+window.__acLoad = async function(ghl){
+  const box = $('acBox'); if(!box) return;
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const H = {"Authorization":"Bearer "+session.access_token};
+    const base = 'https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config';
+    const [lr, dr] = await Promise.all([fetch(base,{headers:H}), fetch(base+'/draft',{headers:H})]);
+    const lj = await lr.json().catch(()=>({})), dj = await dr.json().catch(()=>({}));
+    if(!lr.ok || !lj.ok){
+      box.innerHTML = '<span class="muted">Couldn\'t load the agent config ('+esc(lj.error||('HTTP '+lr.status))+').</span>';
+      return;
+    }
+    __acRender(ghl, lj.config||{}, (dj && dj.ok) ? dj.draft : null);
+  }catch(e){ box.innerHTML = '<span class="muted">Network error: '+esc(e.message)+'</span>'; }
+};
+
+window.__acRender = function(ghl, live, draft){
+  const box = $('acBox'); if(!box) return;
+  const cur = draft || live;                     // an absent draft starts from live
+  const pill = $('acPill');
+  if(pill) pill.innerHTML = draft
+    ? '<span class="tag warn">Unsaved draft</span>'
+    : '<span class="tag other">No draft</span>';
+
+  // Surface the promote guard BEFORE it is hit: if live moved since this draft
+  // was opened, promote will refuse, and finding that out at promote time is
+  // strictly worse than seeing it here.
+  let staleWarn = '';
+  if(draft && draft.greeting_seed_recorded && draft.seeded_greeting_mode !== live.caller_greeting_mode){
+    const lbl = m => (m===null||m===undefined) ? 'inherit (agency default)' : "'"+m+"'";
+    staleWarn = '<div class="msg err" style="display:block">Greeting mode changed elsewhere since this draft was opened ('
+      + esc(lbl(draft.seeded_greeting_mode)) + ' &rarr; ' + esc(lbl(live.caller_greeting_mode))
+      + '). Promote will be refused until you discard this draft and start again, so the change isn\'t silently reverted.</div>';
+  }
+
+  const modeOpts = AC_MODES.map(([v,l]) =>
+    '<option value="'+v+'"'+(acVal(cur.caller_greeting_mode)===v?' selected':'')+'>'+esc(l)+'</option>').join('');
+
+  box.innerHTML = staleWarn
+    + '<div id="acMsg" class="msg"></div>'
+    + '<div class="fld"><label>System prompt</label>'
+    + '<textarea id="acPrompt" rows="14" style="width:100%;padding:11px 13px;background:var(--s3);'
+    + 'border:1px solid var(--border);border-radius:8px;color:var(--white);font-size:13px;'
+    + 'font-family:ui-monospace,monospace;line-height:1.5;outline:none;resize:vertical">'
+    + esc(cur.system_prompt||'') + '</textarea>'
+    + '<div class="meta" style="margin-top:6px">What the agent is told before every call. This is the field a test call actually exercises.</div></div>'
+    + '<div class="two" style="gap:16px">'
+    +   '<div class="fld"><label>Greeting mode</label>'
+    +     '<select id="acMode" style="width:100%;padding:11px 13px;background:var(--s3);border:1px solid var(--border);'
+    +     'border-radius:8px;color:var(--white);font-size:14px;outline:none">'+modeOpts+'</select>'
+    +     '<div class="meta" style="margin-top:6px">Live: <b>'+esc(cur.caller_greeting_mode===null||cur.caller_greeting_mode===undefined?'inherit':cur.caller_greeting_mode)
+    +     '</b>. &ldquo;Inherit&rdquo; is not the same as &ldquo;Off&rdquo; &mdash; it follows the agency default.</div></div>'
+    +   '<div class="fld"><label>Persona name</label>'
+    +     '<input id="acPersona" value="'+esc(cur.persona_name||'')+'" style="width:100%;padding:11px 13px;'
+    +     'background:var(--s3);border:1px solid var(--border);border-radius:8px;color:var(--white);font-size:14px;outline:none"/>'
+    +     '<div class="meta" style="margin-top:6px"><span class="tag other">Not yet live</span> Saved and promoted, but nothing in the call path reads it yet.</div></div>'
+    + '</div>'
+    + '<div class="fld"><label>Primary language</label>'
+    +   '<div style="padding:11px 13px;background:var(--s1);border:1px dashed var(--border);border-radius:8px;color:var(--slate3);font-size:14px">'
+    +   esc(live.primary_language||'en') + ' <span class="muted">&mdash; read-only here</span></div>'
+    +   '<div class="meta" style="margin-top:6px">Owned by the <b>Primary Language</b> card above, which is its only writer. It is shown here for context so a draft can never quietly promote a stale value over it.</div></div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">'
+    +   '<button class="btn" id="acSave" onclick="__acSave(\'' + ghl + '\')">Save draft</button>'
+    +   (draft ? '<button class="btn ghost" id="acDiscard" onclick="__acDiscard(\'' + ghl + '\')">Discard draft</button>' : '')
+    + '</div>'
+    + (draft && draft.updated_at ? '<div class="meta" style="margin-top:10px">Draft last saved '+esc(timeAgo(draft.updated_at))+'.</div>' : '')
+    + '<div class="meta" style="margin-top:10px">Saving affects nothing live. Callers keep hearing the current configuration until the draft is promoted.</div>';
+};
+
+window.__acSave = async function(ghl){
+  const btn = $('acSave'), msg = $('acMsg');
+  const show = (cls,t)=>{ if(msg){ msg.className='msg '+cls; msg.innerHTML=t; } };
+  if(btn) btn.disabled = true;
+  try{
+    const mode = $('acMode').value;
+    const {data:{session}} = await sb.auth.getSession();
+    // primary_language is deliberately absent -- the API rejects it, and sending it
+    // would fail the whole save.
+    const body = {
+      system_prompt: $('acPrompt').value,
+      persona_name:  $('acPersona').value,
+      caller_greeting_mode: mode === '' ? null : mode     // '' means inherit, not 'off'
+    };
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/draft',
+      {method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+       body: JSON.stringify(body)});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.ok && r.ok){ show('ok','&#10003; Draft saved. Nothing live has changed.'); __acLoad(ghl); }
+    else show('err', esc(r.error || ('Save failed ('+resp.status+').')));
+  }catch(e){ show('err','Network error: '+esc(e.message)); }
+  if(btn) btn.disabled = false;
+};
+
+window.__acDiscard = async function(ghl){
+  const btn = $('acDiscard'), msg = $('acMsg');
+  const show = (cls,t)=>{ if(msg){ msg.className='msg '+cls; msg.innerHTML=t; } };
+  if(!confirm('Discard this draft? The saved changes will be lost. Live configuration is unaffected.')) return;
+  if(btn) btn.disabled = true;
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/draft',
+      {method:'DELETE', headers:{'Authorization':'Bearer '+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    // 409 is the active-test-session case and carries a real explanation.
+    if(resp.ok && r.ok){ show('ok','&#10003; Draft discarded.'); __acLoad(ghl); }
+    else show('err', esc(r.error || ('Discard failed ('+resp.status+').')));
+  }catch(e){ show('err','Network error: '+esc(e.message)); }
+  if(btn) btn.disabled = false;
+};
 const $ = s => document.getElementById(s);
 const root = $('root');
 let PROFILE=null, NAV={}, PRODUCTS=[];
@@ -953,11 +1078,17 @@ async function clientView(locationId,fromDrill){
     <div class="meta" style="margin-top:10px">Sets the language the opening greeting plays in (before the caller has spoken) and the language of SMS confirmations and recap emails. It does <b>not</b> limit the conversation — the assistant always replies in whatever language the caller uses. Any of the 97 languages the model supports; type to search.</div>
   ` : `<div class="muted">This location doesn't have a GHL location ID yet, so language can't be configured here.</div>`}
   </div></div>
+  <div class="card"><div class="card-hd"><h3>Agent Configuration</h3><span class="meta">draft &rarr; test &rarr; promote &middot; live callers are unaffected until you promote</span><span id="acPill"></span></div>
+  <div style="padding:16px 20px">
+  ${wGhlId ? `<div id="acBox"><div class="muted">Loading\u2026</div></div>`
+           : `<div class="muted">This location doesn't have a GHL location ID yet, so its agent config can't be edited here.</div>`}
+  </div></div>
   <div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
   <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${(calls||[]).map(callRow).join('')||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>
   <div class="card"><div class="card-hd"><h3>Call Transcripts</h3><span class="meta">stored permanently · full text for the last 90 days</span><button class="btn ghost" onclick="__loadTranscripts('${wGhlId}')">Load transcripts</button></div>
   <div id="transcriptBox" style="padding:16px 20px"><div class="muted">Click "Load transcripts" to view conversation history.</div></div></div>`;
   if(wGhlId) __loadGhlContactStatus(wGhlId);
+  if(wGhlId) __acLoad(wGhlId);
   if(wGhlId) __rbLoadLocation(wGhlId, locationId, widgetRow.agency_id);
 }
 
@@ -1170,7 +1301,7 @@ window.__loadGhlContactStatus = async function(ghlLocationId){
     });
     let result = {}; try{ result = await resp.json(); }catch(e){}
     if(!resp.ok){ box.innerHTML = '<span class="muted">Couldn\'t load current status ('+esc(result.error||('HTTP '+resp.status))+').</span>'; return; }
-    const gm = result.greeting_mode || 'off';
+    const gm = result.effective_greeting_mode || 'off';
     if(!result.configured){
       box.innerHTML = '<span class="tag no_booking">Not configured</span> Contact recognition is off here and no agency default applies. Set values below to turn it on.';
     } else if(result.source === 'location'){
@@ -1183,7 +1314,7 @@ window.__loadGhlContactStatus = async function(ghlLocationId){
     // Reflect the resolved greeting mode in the selector, but never stomp a value
     // the user is actively editing.
     const sel = $('locGhlMode');
-    if(sel && result.greeting_mode && document.activeElement !== sel){ sel.value = result.greeting_mode; }
+    if(sel && result.effective_greeting_mode && document.activeElement !== sel){ sel.value = result.effective_greeting_mode; }
   }catch(err){ box.innerHTML = '<span class="muted">Couldn\'t load current status ('+esc(err.message)+').</span>'; }
 };
 window.__saveLocationGhlContacts = async function(ghlLocationId, locationId, fromDrill, saveAnyway){
