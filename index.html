@@ -322,8 +322,10 @@ window.__acRender = function(ghl, live, draft){
     +   '<div class="meta" style="margin-top:6px">Owned by the <b>Primary Language</b> card above, which is its only writer. It is shown here for context so a draft can never quietly promote a stale value over it.</div></div>'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">'
     +   '<button class="btn" id="acSave" onclick="__acSave(\'' + ghl + '\')">Save draft</button>'
+    +   '<button class="btn ghost" id="acReview" onclick="__acReview(\'' + ghl + '\')">Get feedback</button>'
     +   (draft ? '<button class="btn ghost" id="acDiscard" onclick="__acDiscard(\'' + ghl + '\')">Discard draft</button>' : '')
     + '</div>'
+    + '<div id="acReviewBox" style="margin-top:16px"></div>'
     + (draft && draft.updated_at ? '<div class="meta" style="margin-top:10px">Draft last saved '+esc(timeAgo(draft.updated_at))+'.</div>' : '')
     + '<div class="meta" style="margin-top:10px">Saving affects nothing live. Callers keep hearing the current configuration until the draft is promoted.</div>';
 };
@@ -367,6 +369,89 @@ window.__acDiscard = async function(ghl){
     else show('err', esc(r.error || ('Discard failed ('+resp.status+').')));
   }catch(e){ show('err','Network error: '+esc(e.message)); }
   if(btn) btn.disabled = false;
+};
+
+/* Get feedback -- grades the draft against the locked 12-check rubric via
+   POST .../agent-config/review, which shares its implementation with the
+   assistant's review_draft_config tool so chat and button cannot diverge.
+
+   READ-ONLY: suggestions, never an auto-applied edit. The operator decides.
+   The on-screen values are sent so unsaved edits are graded, including a
+   greeting mode of null (inherit) -- the endpoint treats an explicitly-present
+   key as an override precisely so that case is not silently graded stale. */
+const AC_VERDICT_TAG = { 'pass':'ok', 'fail':'over', 'n/a':'other' };
+const AC_VERDICT_TXT = { 'pass':'PASS', 'fail':'NEEDS WORK', 'n/a':'N/A' };
+
+window.__acReview = async function(ghl){
+  const btn = $('acReview'), out = $('acReviewBox');
+  if(!out) return;
+  if(btn){ btn.disabled = true; btn.textContent = 'Reviewing…'; }
+  out.innerHTML = '<div class="muted">Reviewing the draft against the coaching rubric… this takes a few seconds.</div>';
+  try{
+    const mode = $('acMode') ? $('acMode').value : '';
+    const {data:{session}} = await sb.auth.getSession();
+    const body = {
+      system_prompt: $('acPrompt') ? $('acPrompt').value : '',
+      persona_name:  $('acPersona') ? $('acPersona').value : '',
+      caller_greeting_mode: mode === '' ? null : mode
+    };
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/review',
+      {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+       body: JSON.stringify(body)});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.status === 404){
+      out.innerHTML = '<div class="msg err" style="display:block">There\'s no saved draft to review yet. Save a draft first, then get feedback.</div>';
+    } else if(!resp.ok || !r.ok){
+      out.innerHTML = '<div class="msg err" style="display:block">'+esc(r.error || ('Review failed ('+resp.status+').'))+'</div>';
+    } else {
+      __acRenderReview(r);
+    }
+  }catch(e){
+    out.innerHTML = '<div class="msg err" style="display:block">Network error: '+esc(e.message)+'</div>';
+  }
+  if(btn){ btn.disabled = false; btn.textContent = 'Get feedback'; }
+};
+
+window.__acRenderReview = function(r){
+  const out = $('acReviewBox'); if(!out) return;
+  const sum = r.summary || {};
+  const tools = (r.location && r.location.booking_tools_enabled) || [];
+
+  let h = '<div class="card" style="margin-bottom:0;background:var(--s1)">'
+    + '<div class="card-hd"><h3>Draft feedback</h3><span class="meta">'
+    + '<span class="tag ok">'+(sum['pass']||0)+' pass</span> '
+    + '<span class="tag over">'+(sum['fail']||0)+' needs work</span> '
+    + '<span class="tag other">'+(sum['n/a']||0)+' n/a</span>'
+    + '</span></div><div style="padding:16px 20px">';
+
+  if(r.truncation_notice)
+    h += '<div class="msg err" style="display:block">'+esc(r.truncation_notice)+'</div>';
+
+  // State the model was graded against, so a surprising verdict is explainable
+  // rather than mysterious.
+  h += '<div class="meta" style="margin-bottom:14px">Graded against: vertical <b>'
+    + esc((r.location && r.location.vertical) || 'unknown') + '</b> · booking tools <b>'
+    + esc(tools.length ? tools.join(', ') : 'not enabled') + '</b> · greeting mode <b>'
+    + esc((r.reviewed && r.reviewed.caller_greeting_mode) || 'inherit') + '</b></div>';
+
+  (r.categories || []).forEach(cat => {
+    h += '<div style="margin-bottom:16px"><div style="font-size:11px;font-weight:600;letter-spacing:.05em;'
+      + 'text-transform:uppercase;color:var(--slate4);margin-bottom:8px">'
+      + esc(cat.category) + ' — ' + esc(cat.name) + '</div>';
+    (cat.checks || []).forEach(c => {
+      const tag = AC_VERDICT_TAG[c.verdict] || 'other';
+      h += '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+        + '<span class="tag '+tag+'" style="flex:none;min-width:86px;text-align:center">'
+        + (AC_VERDICT_TXT[c.verdict] || esc(c.verdict)) + '</span>'
+        + '<div><div style="color:var(--slate2);font-size:13px">'+esc(c.check)+'</div>'
+        + '<div class="meta" style="margin-top:2px">'+esc(c.note||'')+'</div></div></div>';
+    });
+    h += '</div>';
+  });
+
+  h += '<div class="meta">'+esc(r.advisory || 'Suggestions only — nothing has been changed.')+'</div>';
+  h += '</div></div>';
+  out.innerHTML = h;
 };
 const $ = s => document.getElementById(s);
 const root = $('root');
