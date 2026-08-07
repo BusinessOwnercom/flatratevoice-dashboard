@@ -295,6 +295,10 @@ window.__acLoad = async function(ghl){
   // only way back. Keep a working card on screen whenever there still is one.
   try{
     __acRender(ghl, payload.live, payload.draft);
+    // Both depend on draft state, so they refresh with it. Failures inside them
+    // are contained -- neither may take down the editor.
+    __acSession(ghl, !!payload.draft);
+    __acSnapshots(ghl, !!payload.draft);
   }catch(e){
     if($('acPrompt')){
       __acShow('err','Couldn\'t refresh the editor ('+esc(e.message)+'). What you see is the previous state -- reload the page before trusting it.');
@@ -362,6 +366,8 @@ window.__acRender = function(ghl, live, draft){
     // happened", which is precisely how the blocked-PUT bug stayed invisible.
     + '<div id="acMsg" class="msg" style="margin-top:12px;margin-bottom:0"></div>'
     + '<div id="acReviewBox" style="margin-top:16px"></div>'
+    + '<div id="acSessionBox" style="margin-top:18px"></div>'
+    + '<div id="acPromoteBox" style="margin-top:18px"></div>'
     + (savedAgo ? '<div class="meta" style="margin-top:10px">Draft last saved '+esc(savedAgo)+'.</div>' : '')
     + '<div class="meta" style="margin-top:10px">Saving affects nothing live. Callers keep hearing the current configuration until the draft is promoted.</div>';
 };
@@ -434,6 +440,170 @@ window.__acDiscard = async function(ghl){
     __acShow('err', m);
   }
   if($('acDiscard')) $('acDiscard').disabled = false;
+};
+
+
+/* ===== PHASE 4: TEST SESSION =============================================
+   A session binds a pooled test number to this location's DRAFT. Dialling that
+   number hears the draft; real callers on the location's own number are
+   completely unaffected. The session is what makes a draft testable before it
+   is ever promoted. */
+window.__acSession = async function(ghl, hasDraft){
+  const box = $('acSessionBox'); if(!box) return;
+  box.innerHTML = '<div class="muted">Checking test call status…</div>';
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/test-session',
+      {headers:{"Authorization":"Bearer "+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    if(!resp.ok || !r.ok){ box.innerHTML = '<div class="muted">Couldn\'t read test call status ('+esc(r.error||('HTTP '+resp.status))+').</div>'; return; }
+    __acRenderSession(ghl, r.session, hasDraft);
+  }catch(e){ box.innerHTML = '<div class="muted">Couldn\'t read test call status: '+esc(e.message)+'</div>'; }
+};
+
+window.__acRenderSession = function(ghl, sess, hasDraft){
+  const box = $('acSessionBox'); if(!box) return;
+  let h = '<div style="border-top:1px solid var(--border);padding-top:16px">'
+    + '<div style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--slate4);margin-bottom:10px">Test call</div>'
+    + '<div id="acSessMsg" class="msg"></div>';
+  if(sess){
+    const exp = sess.expires_at ? new Date(sess.expires_at) : null;
+    const mins = exp && !isNaN(exp.getTime()) ? Math.round((exp.getTime()-Date.now())/60000) : null;
+    h += '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">'
+      + '<span class="tag booked">Active</span>'
+      + '<span style="font-family:var(--dsp);font-size:20px;font-weight:700;color:var(--white)">'+esc(sess.test_number||'')+'</span>'
+      + (mins !== null ? '<span class="meta">'+(mins > 0 ? 'expires in ~'+mins+' min' : 'expired — end it and start a new one')+'</span>' : '')
+      + '<button class="btn ghost" id="acEndSess" onclick="__acEndSession(\'' + ghl + '\')">End test call</button>'
+      + '</div>'
+      + '<div class="meta" style="margin-top:10px">Call this number to hear the <b>draft</b>. Your live number is unaffected — real callers still hear the current configuration.</div>';
+  } else if(hasDraft){
+    h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      + '<button class="btn ghost" id="acStartSess" onclick="__acStartSession(\'' + ghl + '\')">Start test call</button>'
+      + '<span class="meta">Claims a number from the shared test pool so you can dial the draft.</span></div>';
+  } else {
+    h += '<div class="muted">Save a draft first — a test call plays the draft, so there has to be one.</div>';
+  }
+  box.innerHTML = h + '</div>';
+};
+
+window.__acStartSession = async function(ghl){
+  const btn = $('acStartSess'); if(btn) btn.disabled = true;
+  const say = (cls,t)=>{ const m=$('acSessMsg'); if(m){ m.className='msg '+cls; m.innerHTML=t; } };
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/test-session',
+      {method:'POST', headers:{"Authorization":"Bearer "+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.ok && r.ok){
+      await __acSession(ghl, true);
+      say('ok','&#10003; '+(r.reused ? 'Reusing your existing test number' : 'Test number claimed')+': '+esc(r.test_number||''));
+      return;
+    }
+    // 409 = pool exhausted, 400 = no draft. Both carry a real explanation.
+    say('err', esc(r.error || ('Couldn\'t start a test call ('+resp.status+').')));
+  }catch(e){ say('err','Couldn\'t reach the server. No test call was started.'); }
+  if($('acStartSess')) $('acStartSess').disabled = false;
+};
+
+window.__acEndSession = async function(ghl){
+  const btn = $('acEndSess'); if(btn) btn.disabled = true;
+  const say = (cls,t)=>{ const m=$('acSessMsg'); if(m){ m.className='msg '+cls; m.innerHTML=t; } };
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/test-session',
+      {method:'DELETE', headers:{"Authorization":"Bearer "+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.ok && r.ok){
+      await __acSession(ghl, true);
+      say('ok','&#10003; Test call ended and the number returned to the pool.');
+      return;
+    }
+    say('err', esc(r.error || ('Couldn\'t end the test call ('+resp.status+').')));
+  }catch(e){ say('err','Couldn\'t reach the server. The test call was not ended.'); }
+  if($('acEndSess')) $('acEndSess').disabled = false;
+};
+
+/* ===== PHASE 5: PROMOTE / ROLLBACK =======================================
+   Promote is the only action here that changes what real callers hear. It
+   snapshots the current live config first, so every promote is reversible. */
+window.__acSnapshots = async function(ghl, hasDraft){
+  const box = $('acPromoteBox'); if(!box) return;
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/snapshots',
+      {headers:{"Authorization":"Bearer "+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    __acRenderPromote(ghl, (r && r.ok) ? (r.snapshots||[]) : [], hasDraft);
+  }catch(e){ __acRenderPromote(ghl, [], hasDraft); }
+};
+
+window.__acRenderPromote = function(ghl, snaps, hasDraft){
+  const box = $('acPromoteBox'); if(!box) return;
+  let h = '<div style="border-top:1px solid var(--border);padding-top:16px">'
+    + '<div style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--slate4);margin-bottom:10px">Promote to live</div>'
+    + '<div id="acPromMsg" class="msg"></div>';
+  h += hasDraft
+    ? '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+      + '<button class="btn" id="acPromote" onclick="__acPromote(\'' + ghl + '\')">Promote draft to live</button>'
+      + '<span class="meta">This changes what real callers hear. The current configuration is snapshotted first.</span></div>'
+    : '<div class="muted">No draft to promote.</div>';
+
+  if(snaps.length){
+    h += '<div style="margin-top:16px"><div class="meta" style="margin-bottom:8px">Previous configurations — restore any of them:</div>';
+    snaps.slice(0,8).forEach(s => {
+      const when = acAgo(s.snapshotted_at);
+      h += '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">'
+        + '<div><span class="tag other">'+esc(s.reason||'snapshot')+'</span> '
+        + '<span class="meta">'+(when?esc(when):'')+' · persona '+esc(s.persona_name||'—')
+        + ' · greeting '+esc(s.caller_greeting_mode===null||s.caller_greeting_mode===undefined?'inherit':s.caller_greeting_mode)
+        + ' · prompt '+esc(String(s.system_prompt_length||0))+' chars</span></div>'
+        + '<button class="btn ghost" onclick="__acRollback(\'' + ghl + '\',\'' + esc(s.snapshot_id) + '\')">Restore</button></div>';
+    });
+    if(snaps.length > 8) h += '<div class="meta" style="margin-top:8px">Showing the 8 most recent of '+snaps.length+'.</div>';
+    h += '</div>';
+  }
+  box.innerHTML = h + '</div>';
+};
+
+window.__acPromote = async function(ghl){
+  if(!confirm('Promote this draft to live?\n\nReal callers will hear the new configuration from the next call. The current configuration is snapshotted first, so this can be undone.')) return;
+  const btn = $('acPromote'); if(btn) btn.disabled = true;
+  const say = (cls,t)=>{ const m=$('acPromMsg'); if(m){ m.className='msg '+cls; m.innerHTML=t; } };
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/promote',
+      {method:'POST', headers:{"Authorization":"Bearer "+session.access_token}});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.ok && r.ok){
+      await __acLoad(ghl);                 // draft is cleared by promote; reload everything
+      const m=$('acPromMsg'); if(m){ m.className='msg ok'; m.innerHTML='&#10003; Promoted. Real callers hear this from the next call. Use Restore below to undo.'; }
+      return;
+    }
+    // 409 carries the greeting-mode guards (stale draft / GHL not connected) and
+    // names the live value -- surface it verbatim rather than a generic failure.
+    say('err', esc(r.error || ('Promote failed ('+resp.status+').'))
+      + (r.live_greeting_mode !== undefined ? ' <span class="muted">(live greeting mode is now '
+         + esc(r.live_greeting_mode===null?'inherit':r.live_greeting_mode) + ')</span>' : ''));
+  }catch(e){ say('err','Couldn\'t reach the server. Nothing was promoted.'); }
+  if($('acPromote')) $('acPromote').disabled = false;
+};
+
+window.__acRollback = async function(ghl, snapshotId){
+  if(!confirm('Restore this configuration?\n\nReal callers will hear it from the next call. The current configuration is snapshotted first, so this is also reversible.')) return;
+  const say = (cls,t)=>{ const m=$('acPromMsg'); if(m){ m.className='msg '+cls; m.innerHTML=t; } };
+  try{
+    const {data:{session}} = await sb.auth.getSession();
+    const resp = await fetch('https://api.flatratevoice.com/api/locations/'+encodeURIComponent(ghl)+'/agent-config/rollback',
+      {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.access_token},
+       body: JSON.stringify({snapshot_id: snapshotId})});
+    const r = await resp.json().catch(()=>({}));
+    if(resp.ok && r.ok){
+      await __acLoad(ghl);
+      const m=$('acPromMsg'); if(m){ m.className='msg ok'; m.innerHTML='&#10003; Restored. Real callers hear this from the next call.'; }
+      return;
+    }
+    say('err', esc(r.error || ('Restore failed ('+resp.status+').')));
+  }catch(e){ say('err','Couldn\'t reach the server. Nothing was restored.'); }
 };
 
 /* Get feedback -- grades the draft against the locked 12-check rubric via
