@@ -1020,17 +1020,34 @@ window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency
 async function adminHome(){
   window.__onLocationView = false;
   shell(`<div class="center">Loading platform…</div>`);
-  const [{data:ags},{data:locs},{data:calls},{data:noEnt}] = await Promise.all([
+  const [{data:ags},{data:locs},{data:noEnt}] = await Promise.all([
     sb.from('agency_month_usage').select('*').order('name'),
     sb.from('locations').select('id,agency_id'),
-    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
     // Agencies with NO agency_products row at all -- they are absent from
     // agency_month_usage, so they silently vanish from Projected revenue and the
     // list below. Surfaced against the number they invalidate, deliberately: a
     // detector nobody looks at is not a detector.
     sb.from('agencies_missing_entitlement').select('name')
   ]);
-  const locCount={}; (locs||[]).forEach(l=>locCount[l.agency_id]=(locCount[l.agency_id]||0)+1);
+  // agency_month_usage already IS the set of agencies that count (not internal,
+  // FRV-entitled). Every other figure here derives from that same set, so there is
+  // ONE definition of "qualifying" rather than a second copy of the predicates that
+  // could drift. Deliberately no frv_locations view for that reason, and deliberately
+  // no ghl_location_id LIKE 'frc-%' / vertical='flatratecompute' -- those are the
+  // conventions the FRC-out-of-locations migration deletes.
+  const agyIds=new Set((ags||[]).map(a=>a.agency_id));
+  const frvLocs=(locs||[]).filter(l=>agyIds.has(l.agency_id));
+  const frvLocIds=frvLocs.map(l=>l.id);
+  // EXACT, not filtered-after-the-fact: a SECOND sequential query keyed on the
+  // qualifying location ids, costing one extra round trip. Fetching the N most recent
+  // platform-wide and filtering afterwards can only under-report -- a qualifying call
+  // older than that window is invisible -- and this is the surface that already
+  // misattributed internal calls, so "fails safe" was not good enough.
+  const {data:frvCalls} = frvLocIds.length
+    ? await sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome')
+        .in('location_id',frvLocIds).order('started_at',{ascending:false}).limit(8)
+    : {data:[]};
+  const locCount={}; frvLocs.forEach(l=>locCount[l.agency_id]=(locCount[l.agency_id]||0)+1);
   const totalMin=(ags||[]).reduce((s,a)=>s+Number(a.minutes_used||0),0);
   const mrr=(ags||[]).reduce((s,a)=>s+poolCalc(a).bill,0);
   const overN=(ags||[]).filter(a=>poolCalc(a).over>0).length;
@@ -1054,11 +1071,11 @@ async function adminHome(){
     <td class="mono">${money(p.bill)}</td></tr>`;}).join('');
   $('view').innerHTML=`
     <div class="viewhead"><div><div class="crumbs">All agencies</div><h1>Platform overview</h1><div class="sub">Every agency, every client location, live usage.</div></div><span class="pill">SUPER ADMIN</span></div>
-    <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',(locs||[]).length,'live')}${kpi('Minutes this month',fmt(totalMin),'all agencies')}${kpi('Projected revenue',money(mrr),'estimate · calendar month'+(overN?' · '+overN+' in overage':''),overN?'a':'g')}</div>
+    <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',frvLocs.length,'FRV tenants')}${kpi('Minutes this month',fmt(totalMin),'FRV tenants')}${kpi('Projected revenue',money(mrr),'estimate · calendar month'+(overN?' · '+overN+' in overage':''),overN?'a':'g')}</div>
     ${entWarn}
     <div class="card"><div class="card-hd"><h3>Agencies</h3><span class="meta">click a row to drill in</span></div>
     <table><thead><tr><th>Agency</th><th>Plan</th><th>Clients</th><th>Minutes</th><th>Pool</th><th>Status</th><th>Est. bill</th></tr></thead><tbody>${rows||'<tr><td colspan=7 class="muted" style="padding:20px">No agencies yet.</td></tr>'}</tbody></table></div>
-    ${callsCard(calls,true)}`;
+    ${callsCard(frvCalls,true,{meta:'FRV tenants',emptyMsg:'No calls from FRV tenants yet.'})}`;
 }
 
 /* ---------- AGENCY ---------- */
@@ -1071,10 +1088,13 @@ async function agencyView(agencyId,fromAdmin){
   // resolves it on the hot path, so that's where the source of truth is. It's
   // read back through the API rather than mirrored, and a failure here just
   // renders an empty card instead of taking down the whole agency view.
-  const [{data:agRows},{data:locs},{data:calls},{data:ghlRow},brand,billing] = await Promise.all([
+  // !! The calls feed used to be fetched here with NO agency filter: the 8 most recent
+  // calls PLATFORM-WIDE, rendered on one agency's page, so a super_admin viewing
+  // agency X saw other agencies' calls -- including [INTERNAL] test lines -- presented
+  // as X's. Now a separate keyed query below.
+  const [{data:agRows},{data:locs},{data:ghlRow},brand,billing] = await Promise.all([
     sb.from('agency_month_usage').select('*').eq('agency_id',agencyId).maybeSingle().then(r=>({data:r.data?[r.data]:[]})),
     sb.from('location_month_usage').select('*').eq('agency_id',agencyId).order('name'),
-    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
     sb.from('agencies').select('ghl_webhook_url,ghl_company_id,default_client_retainer_cents').eq('id',agencyId).maybeSingle(),
     __apiGet('https://api.flatratevoice.com/api/agency/branding?agency_id='+encodeURIComponent(agencyId)).catch(()=>({})),
     // A network/CORS failure rejects this fetch (e.g. the apikey-preflight
@@ -1087,6 +1107,14 @@ async function agencyView(agencyId,fromAdmin){
   const a=(agRows||[])[0]; if(!a){$('view').innerHTML=`<div class="center">No data for this agency.</div>`;return;}
   const p=poolCalc(a);
   const bill=__buildBill(p, billing);
+  // EXACT: keyed on THIS agency's own location ids. location_month_usage is already
+  // scoped by agency_id, so its location_ids are the authoritative set. Placed after
+  // the early return above, so a no-data agency costs no extra query.
+  const myLocIds=(locs||[]).map(l=>l.location_id);
+  const {data:calls} = myLocIds.length
+    ? await sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome')
+        .in('location_id',myLocIds).order('started_at',{ascending:false}).limit(8)
+    : {data:[]};
   const calls_m=(locs||[]).reduce((s,l)=>s+Number(l.calls||0),0);
   const booked=(locs||[]).reduce((s,l)=>s+Number(l.booked||0),0);
   const rows=(locs||[]).map(l=>`<tr class="click" onclick="__go('location','${l.location_id}')">
@@ -1191,7 +1219,7 @@ async function agencyView(agencyId,fromAdmin){
       </form>
     </div>
     <table><thead><tr><th>Client</th><th>Vertical</th><th>Minutes</th><th>Calls</th><th>Booked</th><th>Book rate</th></tr></thead><tbody>${rows||'<tr><td colspan=6 class="muted" style="padding:20px">No locations yet.</td></tr>'}</tbody></table></div>
-    ${callsCard(calls,true)}`;
+    ${callsCard(calls,true,{meta:'this agency',emptyMsg:'No calls for this agency yet.'})}`;
   __rbLoadAgencyStatus(agencyId);
 }
 
@@ -1484,14 +1512,19 @@ async function clientView(locationId,fromDrill){
   const label={booked:'Booked',message:'Message taken',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
   return `<tr><td class="muted">${ago}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
 }
-function callsCard(calls,showLoc){
+// opts.meta / opts.emptyMsg let a FILTERED feed say which filter is applied and say
+// honestly why it is empty. Both filtered callers use an EXACT keyed query, so
+// "empty" means zero calls for those locations -- not "none in a window".
+function callsCard(calls,showLoc,opts){
   const rows=(calls||[]).map(c=>{
     const dur=c.duration_sec?Math.floor(c.duration_sec/60)+':'+String(c.duration_sec%60).padStart(2,'0'):'—';
     const label={booked:'Booked',message:'Message',no_booking:'No booking',transferred:'Transferred',other:'Handled'}[c.outcome]||c.outcome;
     return `<tr><td class="muted">${timeAgo(new Date(c.started_at))}</td><td class="mono">${esc(c.from_number||'')}</td><td class="mono">${dur}</td><td><span class="tag ${c.outcome}">${label}</span></td></tr>`;
   }).join('');
-  return `<div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">live</span></div>
-  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${rows||'<tr><td colspan=4 class="muted" style="padding:20px">No calls yet.</td></tr>'}</tbody></table></div>`;
+  const meta=(opts&&opts.meta)||'live';
+  const empty=(opts&&opts.emptyMsg)||'No calls yet.';
+  return `<div class="card"><div class="card-hd"><h3>Recent calls</h3><span class="meta">${esc(meta)}</span></div>
+  <table><thead><tr><th>When</th><th>From</th><th>Duration</th><th>Outcome</th></tr></thead><tbody>${rows||`<tr><td colspan=4 class="muted" style="padding:20px">${esc(empty)}</td></tr>`}</tbody></table></div>`;
 }
 function timeAgo(d){const s=(Date.now()-d.getTime())/1000;if(s<3600)return Math.max(1,Math.floor(s/60))+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
 
