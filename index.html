@@ -1020,15 +1020,32 @@ window.__back=()=>{ if(NAV.location) delete NAV.location; else delete NAV.agency
 async function adminHome(){
   window.__onLocationView = false;
   shell(`<div class="center">Loading platform…</div>`);
-  const [{data:ags},{data:locs},{data:calls}] = await Promise.all([
+  const [{data:ags},{data:locs},{data:calls},{data:noEnt}] = await Promise.all([
     sb.from('agency_month_usage').select('*').order('name'),
     sb.from('locations').select('id,agency_id'),
-    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8)
+    sb.from('calls').select('location_id,started_at,from_number,duration_sec,outcome').order('started_at',{ascending:false}).limit(8),
+    // Agencies with NO agency_products row at all -- they are absent from
+    // agency_month_usage, so they silently vanish from Projected revenue and the
+    // list below. Surfaced against the number they invalidate, deliberately: a
+    // detector nobody looks at is not a detector.
+    sb.from('agencies_missing_entitlement').select('name')
   ]);
   const locCount={}; (locs||[]).forEach(l=>locCount[l.agency_id]=(locCount[l.agency_id]||0)+1);
   const totalMin=(ags||[]).reduce((s,a)=>s+Number(a.minutes_used||0),0);
   const mrr=(ags||[]).reduce((s,a)=>s+poolCalc(a).bill,0);
   const overN=(ags||[]).filter(a=>poolCalc(a).over>0).length;
+  // Absent-from-MRR warning. Sits directly under the KPI row so the caveat cannot
+  // be read separately from the figure it undermines. An FRC-only agency is
+  // CORRECTLY absent (it has no FRV entitlement); an FRV agency appearing here is
+  // a missing entitlement row, which is the silent-exclusion bug the migration doc
+  // §3 describes.
+  const nMissing=(noEnt||[]).length;
+  const entWarn = nMissing ? `<div class="card" style="border-color:#cc5555">
+    <div style="padding:12px 20px;color:#ffb0b0">&#9888; ${nMissing} agenc${nMissing===1?'y has':'ies have'} no
+    <span class="mono">agency_products</span> entitlement, so ${nMissing===1?'it is':'they are'} absent from
+    Projected revenue and from the list below: ${(noEnt||[]).map(r=>esc(r.name)).join(', ')}.
+    <div class="meta" style="margin-top:6px">An FRC-only agency is correctly absent. An FRV agency here means its
+    entitlement row was never written &mdash; see FRV-FRC-LANES-MIGRATION-SCOPE-2026-08-08.md &sect;3.</div></div></div>` : '';
   const rows=(ags||[]).map(a=>{const p=poolCalc(a);return `<tr class="click" onclick="__go('agency','${a.agency_id}')">
     <td class="name">${esc(a.name)}</td><td style="text-transform:capitalize">${a.plan}</td><td>${locCount[a.agency_id]||0}</td>
     <td class="mono">${fmt(a.minutes_used)} / ${fmt(p.t.pool)}</td>
@@ -1038,6 +1055,7 @@ async function adminHome(){
   $('view').innerHTML=`
     <div class="viewhead"><div><div class="crumbs">All agencies</div><h1>Platform overview</h1><div class="sub">Every agency, every client location, live usage.</div></div><span class="pill">SUPER ADMIN</span></div>
     <div class="kpis">${kpi('Agencies',(ags||[]).length,'')}${kpi('Client locations',(locs||[]).length,'live')}${kpi('Minutes this month',fmt(totalMin),'all agencies')}${kpi('Projected revenue',money(mrr),'estimate · calendar month'+(overN?' · '+overN+' in overage':''),overN?'a':'g')}</div>
+    ${entWarn}
     <div class="card"><div class="card-hd"><h3>Agencies</h3><span class="meta">click a row to drill in</span></div>
     <table><thead><tr><th>Agency</th><th>Plan</th><th>Clients</th><th>Minutes</th><th>Pool</th><th>Status</th><th>Est. bill</th></tr></thead><tbody>${rows||'<tr><td colspan=7 class="muted" style="padding:20px">No agencies yet.</td></tr>'}</tbody></table></div>
     ${callsCard(calls,true)}`;
